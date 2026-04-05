@@ -1,0 +1,94 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "User Profile",
+      "description": "Stores professional identity and CV content.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "Firebase Auth UID" },
+        "full_name": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "linkedin_url": { "type": "string", "format": "uri" },
+        "portfolio_url": { "type": "string", "format": "uri" },
+        "cv_text": { "type": "string" },
+        "skills": { "type": "array", "items": { "type": "string" } },
+        "experience_summary": { "type": "string" },
+        "updated_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "full_name", "email", "cv_text"]
+    },
+    "Job": {
+      "title": "Job Opportunity",
+      "description": "Stores details of a captured job posting.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "Owner UID" },
+        "title": { "type": "string" },
+        "company": { "type": "string" },
+        "summary": { "type": "string" },
+        "location": { "type": "string" },
+        "employment_type": { "type": "string" },
+        "remote_policy": { "type": "string" },
+        "application_url": { "type": "string" },
+        "deadline": { "type": "string" },
+        "source_type": { "type": "string" },
+        "captured_at": { "type": "string", "format": "date-time" },
+        "status": { "type": "string", "enum": ["captured", "analyzed", "applied", "interviewing", "rejected", "offered", "archived"] }
+      },
+      "required": ["uid", "title", "company", "status"]
+    },
+    "Application": {
+      "title": "Job Application",
+      "description": "Stores generated application materials and tracking info.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "Owner UID" },
+        "job_id": { "type": "string", "description": "Reference to Job document ID" },
+        "subject": { "type": "string" },
+        "email_body": { "type": "string" },
+        "cover_note": { "type": "string" },
+        "short_fit_answer": { "type": "string" },
+        "tone": { "type": "string" },
+        "output_mode": { "type": "string" },
+        "applied_at": { "type": "string", "format": "date-time" },
+        "notes": { "type": "string" }
+      },
+      "required": ["uid", "job_id"]
+    },
+    "AILog": {
+      "title": "AI Audit Log",
+      "description": "Logs for AI model interactions.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "model": { "type": "string" },
+        "action": { "type": "string" },
+        "prompt": { "type": "string" },
+        "response": { "type": "string" },
+        "latency_ms": { "type": "integer" },
+        "tokens_input": { "type": "integer" },
+        "tokens_output": { "type": "integer" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "model", "action", "timestamp"]
+    }
+  },
+  "firestore": {
+    "/users/{uid}": {
+      "schema": "UserProfile",
+      "description": "User profile documents"
+    },
+    "/jobs/{jobId}": {
+      "schema": "Job",
+      "description": "Captured job opportunities"
+    },
+    "/applications/{appId}": {
+      "schema": "Application",
+      "description": "Generated application materials"
+    },
+    "/ai_logs/{logId}": {
+      "schema": "AILog",
+      "description": "AI interaction logs"
+    }
+  }
+}

@@ -1,0 +1,172 @@
+// ===============================================================
+// Assumed Data Model
+// ===============================================================
+//
+// Collection: users
+// Document ID: {uid}
+// Fields:
+//   - full_name: string (required)
+//   - email: string (required, email format)
+//   - linkedin_url: string (optional, URL format)
+//   - portfolio_url: string (optional, URL format)
+//   - cv_text: string (required)
+//   - skills: list (optional)
+//   - experience_summary: string (optional)
+//   - updated_at: timestamp (optional)
+//
+// Collection: jobs
+// Document ID: {jobId}
+// Fields:
+//   - uid: string (required, owner UID)
+//   - title: string (required)
+//   - company: string (required)
+//   - summary: string (optional)
+//   - location: string (optional)
+//   - employment_type: string (optional)
+//   - remote_policy: string (optional)
+//   - application_url: string (optional)
+//   - deadline: string (optional)
+//   - source_type: string (optional)
+//   - captured_at: timestamp (optional)
+//   - status: string (required, enum: captured, analyzed, applied, interviewing, rejected, offered, archived)
+//
+// Collection: applications
+// Document ID: {appId}
+// Fields:
+//   - uid: string (required, owner UID)
+//   - job_id: string (required, reference to jobs collection)
+//   - subject: string (optional)
+//   - email_body: string (optional)
+//   - cover_note: string (optional)
+//   - short_fit_answer: string (optional)
+//   - tone: string (optional)
+//   - output_mode: string (optional)
+//   - applied_at: timestamp (optional)
+//   - notes: string (optional)
+//
+// ===============================================================
+
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isDocOwner() {
+      return isAuthenticated() && request.auth.uid == resource.data.uid;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        (exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
+          (request.auth.token.email == "franklinvidal198@gmail.com" && request.auth.token.email_verified == true));
+    }
+
+    function isValidEmail(email) {
+      return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+
+    function isValidUser(data) {
+      let allowed = ['uid', 'full_name', 'email', 'phone', 'location', 'target_roles', 'skills', 'years_of_experience', 'experience_summary', 'preferred_industries', 'cv_text', 'tone_preference', 'linkedin_url', 'portfolio_url', 'updated_at'];
+      return hasOnlyAllowedFields(allowed) &&
+             data.full_name is string && data.full_name.size() >= 0 && data.full_name.size() < 100 &&
+             isValidEmail(data.email) &&
+             data.cv_text is string && data.cv_text.size() < 100000;
+    }
+
+    function isValidJob(data) {
+      let allowed = [
+        'uid', 'title', 'company', 'summary', 'location', 'employment_type', 
+        'remote_policy', 'application_url', 'deadline', 'source_type', 
+        'captured_at', 'status', 'id', 'requirements', 'required_skills', 
+        'preferred_skills', 'experience_years_required', 'seniority', 
+        'application_method', 'application_email', 'salary_info', 
+        'source_label', 'raw_excerpt', 'missing_fields', 'extraction_confidence'
+      ];
+      let validStatuses = ["saved", "analyzed", "apply_now", "applied", "interview", "rejected", "offer", "archived", "follow_up"];
+      return hasOnlyAllowedFields(allowed) &&
+             data.uid == request.auth.uid &&
+             (data.title == null || (data.title is string && data.title.size() < 500)) &&
+             (data.company == null || (data.company is string && data.company.size() < 500)) &&
+             data.status in validStatuses;
+    }
+
+    function isValidApplication(data) {
+      let allowed = [
+        'uid', 'job_id', 'subject', 'email_body', 'cover_note', 
+        'short_fit_answer', 'tone', 'output_mode', 'applied_at', 
+        'notes', 'id', 'generation_confidence', 'attachment_note'
+      ];
+      return hasOnlyAllowedFields(allowed) &&
+             data.uid == request.auth.uid &&
+             data.job_id is string && data.job_id.size() > 0;
+    }
+
+    function isValidAILog(data) {
+      let allowed = ['uid', 'model', 'action', 'prompt', 'response', 'latency_ms', 'tokens_input', 'tokens_output', 'timestamp'];
+      return hasOnlyAllowedFields(allowed) &&
+             data.uid == request.auth.uid &&
+             data.model is string &&
+             (data.timestamp == null || data.timestamp is timestamp);
+    }
+
+    // ===============================================================
+    // Matches
+    // ===============================================================
+
+    match /test/connection {
+      allow read: if true;
+    }
+
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow create: if isOwner(userId) && isValidUser(request.resource.data);
+      allow update: if isOwner(userId) && isValidUser(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /jobs/{jobId} {
+      allow read: if isDocOwner() || isAdmin();
+      allow create: if isAuthenticated() && isValidJob(request.resource.data);
+      allow update: if isDocOwner() && isValidJob(request.resource.data);
+      allow delete: if isDocOwner() || isAdmin();
+    }
+
+    match /applications/{appId} {
+      allow read: if isDocOwner() || isAdmin();
+      allow create: if isAuthenticated() && isValidApplication(request.resource.data);
+      allow update: if isDocOwner() && isValidApplication(request.resource.data);
+      allow delete: if isDocOwner() || isAdmin();
+    }
+
+    match /ai_logs/{logId} {
+      allow read: if isDocOwner() || isAdmin();
+      allow create: if isAuthenticated() && isValidAILog(request.resource.data);
+      allow update: if false;
+      allow delete: if isAdmin();
+    }
+
+    match /admins/{adminId} {
+      allow read: if isAuthenticated();
+      allow write: if false; // Only manageable via Firebase Console/Admin SDK
+    }
+  }
+}
