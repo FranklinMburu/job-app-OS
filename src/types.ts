@@ -72,10 +72,12 @@ export interface UserProfile {
     tone_preference: Tone;
     linkedin_url?: string;
     portfolio_url?: string;
+    updated_at?: any;
 }
 
 export enum JobStatus {
     saved = "saved",
+    captured = "captured",
     analyzed = "analyzed",
     apply_now = "apply_now",
     applied = "applied",
@@ -107,10 +109,16 @@ export interface ExtractedJob {
     salary_info?: string;
     source_type: SourceType;
     source_label?: string;
+    source_url?: string;
     raw_excerpt?: string;
+    raw_content?: string;
     missing_fields: string[];
     extraction_confidence: ExtractionConfidence;
     status?: JobStatus;
+    postgres_id?: number;
+    analysis?: JobAnalysis;
+    analysis_at?: any;
+    analysis_profile_at?: any;
     captured_at?: any;
 }
 

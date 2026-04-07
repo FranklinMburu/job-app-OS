@@ -81,6 +81,7 @@ class ExtractedJob(BaseModel):
     raw_excerpt: Optional[str] = None
     missing_fields: List[str] = Field(default_factory=list)
     extraction_confidence: ExtractionConfidence
+    postgres_id: Optional[int] = None
 
 class GenerateApplicationRequest(BaseModel):
     job: ExtractedJob

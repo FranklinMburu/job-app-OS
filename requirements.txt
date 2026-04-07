@@ -10,3 +10,5 @@ beautifulsoup4
 pytesseract
 Pillow
 firebase-admin
+sqlalchemy
+psycopg2-binary

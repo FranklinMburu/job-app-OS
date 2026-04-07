@@ -11,11 +11,26 @@ def fetch_job_page(url: str) -> str:
     """
     try:
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-            "Accept-Language": "en-US,en;q=0.5",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Accept-Encoding": "gzip, deflate, br",
+            "DNT": "1",
+            "Connection": "keep-alive",
+            "Upgrade-Insecure-Requests": "1",
+            "Sec-Ch-Ua": '"Chromium";v="122", "Not(A:Brand";v="24", "Google Chrome";v="122"',
+            "Sec-Ch-Ua-Mobile": "?0",
+            "Sec-Ch-Ua-Platform": '"Windows"',
+            "Sec-Fetch-Dest": "document",
+            "Sec-Fetch-Mode": "navigate",
+            "Sec-Fetch-Site": "none",
+            "Sec-Fetch-User": "?1",
+            "Cache-Control": "max-age=0",
         }
-        response = requests.get(url, headers=headers, timeout=15)
+        
+        # Add a session to handle cookies if needed
+        session = requests.Session()
+        response = session.get(url, headers=headers, timeout=20, allow_redirects=True)
         response.raise_for_status()
         
         # Ensure correct encoding
@@ -25,16 +40,33 @@ def fetch_job_page(url: str) -> str:
         soup = BeautifulSoup(response.text, "html.parser")
         
         # Remove non-content elements
-        for element in soup(["script", "style", "nav", "footer", "header", "aside", "form", "svg", "noscript"]):
+        for element in soup(["script", "style", "nav", "footer", "header", "aside", "form", "svg", "noscript", "iframe"]):
             element.extract()
             
         # Try to find common job description containers if possible
         # This is a heuristic, we still fallback to full body if not found
-        content_areas = soup.find_all(['main', 'article', 'div'], class_=lambda x: x and any(term in x.lower() for term in ['job', 'description', 'posting', 'career', 'content']))
+        content_selectors = [
+            'main', 'article', 
+            '.job-description', '#job-description', 
+            '.posting-content', '.job-details',
+            '[data-automation-id="jobPostingDescription"]',
+            '.jobs-description-content__text'
+        ]
         
-        if content_areas:
-            # Use the largest content area found
-            main_content = max(content_areas, key=lambda x: len(x.get_text()))
+        main_content = None
+        for selector in content_selectors:
+            found = soup.select_one(selector)
+            if found and len(found.get_text()) > 200:
+                main_content = found
+                break
+        
+        if not main_content:
+            # Try finding by class name containing keywords
+            content_areas = soup.find_all(['div', 'section'], class_=lambda x: x and any(term in x.lower() for term in ['job', 'description', 'posting', 'career', 'content']))
+            if content_areas:
+                main_content = max(content_areas, key=lambda x: len(x.get_text()))
+        
+        if main_content:
             text = main_content.get_text(separator="\n")
         else:
             # Fallback to body

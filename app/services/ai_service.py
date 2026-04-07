@@ -10,6 +10,9 @@ from firebase_admin import credentials, firestore
 from typing import Any, Dict, Type, TypeVar, Optional
 from pydantic import BaseModel, ValidationError
 from fastapi import HTTPException, status
+from PIL import Image
+import io
+import base64
 from app.core.ai_config import get_model, MODEL_NAME
 from app.schemas.job import ExtractedJob, GeneratedApplication, SourceType, ExtractionConfidence
 from app.schemas.analysis import JobAnalysis, AnalyzeJobRequest, Verdict, ApplyRecommendation, Confidence
@@ -116,30 +119,81 @@ class AIService:
         
         # Pre-processing based on source type
         processed_content = content
+        image_data = None
+        mime_type = "image/png"
         
         # Only fetch if content looks like a URL and we haven't fetched it yet
-        # If content is long, it's likely already fetched text
         if source_type == SourceType.link and len(content) < 2000 and (content.startswith('http://') or content.startswith('https://')):
             logger.info(f"[{request_id}] Fetching content from URL in AIService: {content[:50]}...")
             processed_content = fetch_job_page(content)
-        elif source_type == SourceType.image and len(content) > 100: # Likely base64
-            processed_content = extract_text_from_image(content)
+        elif source_type == SourceType.image:
+            # If it's an image, we'll pass it directly to Gemini if it's base64
+            if content.startswith('data:image'):
+                # Extract the base64 part and mime type
+                try:
+                    header, image_data = content.split(',', 1)
+                    mime_type = header.split(';')[0].split(':')[1]
+                except (IndexError, ValueError):
+                    image_data = content
+            elif len(content) > 100 and ' ' not in content[:100]:
+                # Heuristic: if it's long and has no spaces in the first 100 chars, it's likely base64
+                image_data = content
+            else:
+                # Likely OCR text already extracted
+                processed_content = content
+                image_data = None
 
-        # Prevent misuse: Limit content length
-        if len(processed_content) > 50000:
+        # Prevent misuse: Limit content length for text
+        if not image_data and len(processed_content) > 50000:
             logger.warning(f"[{request_id}] Content too long ({len(processed_content)} chars). Truncating.")
             processed_content = processed_content[:50000]
 
         prompt = f"""
-        TASK: Extract job details from the provided content.
+        TASK: Extract job details from the provided {source_type}.
         REQUEST_ID: {request_id}
-        SOURCE TYPE: {source_type}
+        
+        INSTRUCTIONS:
+        1. Extract all relevant job information into the specified JSON format.
+        2. Identify the source platform (e.g., LinkedIn, Indeed, Company Website) and set 'source_label'.
+        3. If a field is not found, leave it as null or an empty list as appropriate.
+        4. For 'seniority', 'employment_type', 'remote_policy', and 'application_method', use ONLY the allowed enum values.
+        5. For 'extraction_confidence', use 'high' only if the title, company, and requirements are clearly present.
+        
+        ENUM VALUES:
+        - seniority: intern, junior, mid, senior, lead, unknown
+        - employment_type: full_time, part_time, contract, internship, temporary, unknown
+        - remote_policy: remote, hybrid, onsite, unknown
+        - application_method: email, external_link, portal, unknown
+        - extraction_confidence: low, medium, high
+        
+        SCHEMA:
+        - title: Job title
+        - company: Company name
+        - summary: 2-3 sentence overview
+        - requirements: List of key requirements
+        - required_skills: List of technical skills
+        - preferred_skills: List of nice-to-have skills
+        - experience_years_required: e.g. "3+ years"
+        - seniority: Enum value
+        - employment_type: Enum value
+        - location: City, State/Country or "Remote"
+        - remote_policy: Enum value
+        - application_method: Enum value
+        - application_email: Email to apply to
+        - application_url: URL to apply at
+        - deadline: ISO 8601 date or raw string
+        - salary_info: e.g. "$120k - $150k"
+        - source_label: e.g. "LinkedIn"
+        - raw_excerpt: A 200-300 character snippet of the original text
+        - missing_fields: List of missing important fields
+        - extraction_confidence: Enum value
+        
         CONTENT:
         ---
-        {processed_content}
+        {processed_content if not image_data else "[IMAGE PROVIDED]"}
         ---
         
-        OUTPUT FORMAT: JSON matching the ExtractedJob schema.
+        OUTPUT: Return a JSON object matching the ExtractedJob schema.
         """
         
         fallback = ExtractedJob(
@@ -153,7 +207,23 @@ class AIService:
             return fallback
 
         try:
-            response = self.model.generate_content(prompt)
+            if image_data:
+                # Multimodal request using PIL Image
+                try:
+                    image_bytes = base64.b64decode(image_data)
+                    img = Image.open(io.BytesIO(image_bytes))
+                    response = self.model.generate_content([prompt, img])
+                except Exception as img_err:
+                    logger.error(f"[{request_id}] Failed to process image with PIL: {img_err}")
+                    # Fallback to dict format if PIL fails
+                    image_part = {
+                        "mime_type": mime_type,
+                        "data": image_data
+                    }
+                    response = self.model.generate_content([prompt, image_part])
+            else:
+                response = self.model.generate_content(prompt)
+                
             latency = time.time() - start_time
             
             usage = response.usage_metadata
@@ -170,9 +240,22 @@ class AIService:
             
             data = extract_json(response.text)
             data["source_type"] = source_type
+            
+            # Ensure required fields for Pydantic
+            if "extraction_confidence" not in data:
+                data["extraction_confidence"] = "medium"
+                
             return self._safe_parse(data, ExtractedJob, request_id)
         except Exception as e:
             logger.error(f"[{request_id}] extract_job failure: {e}")
+            # If multimodal fails, try fallback to OCR text if available
+            if image_data:
+                try:
+                    logger.info(f"[{request_id}] Multimodal failed, falling back to OCR text.")
+                    ocr_text = extract_text_from_image(content)
+                    return self.extract_job(ocr_text, SourceType.text, user_id)
+                except Exception as ocr_err:
+                    logger.error(f"[{request_id}] OCR fallback also failed: {ocr_err}")
             return fallback
 
     def analyze_job(self, request: AnalyzeJobRequest) -> JobAnalysis:
@@ -193,6 +276,15 @@ class AIService:
         
         USER PROFILE:
         {request.user_profile.model_dump_json(indent=2)}
+        
+        INSTRUCTIONS:
+        1. Analyze the alignment between the job requirements and the user's skills/experience.
+        2. Determine a 'verdict' (relevant, maybe, not_worth_it).
+        3. Provide a 'apply_recommendation' (apply, apply_if_time, skip).
+        4. List specific 'reasons' for the recommendation (strengths).
+        5. List specific 'gaps' where the user might be lacking.
+        6. Provide a concise 'fit_summary' explaining the overall match.
+        7. Set a 'confidence' level for your analysis.
         
         OUTPUT FORMAT: JSON matching the JobAnalysis schema.
         """
@@ -354,6 +446,14 @@ class AIService:
         ---
         {cv_text}
         ---
+        
+        INSTRUCTIONS:
+        1. Extract the user's full name, email, phone, and location.
+        2. Identify their target roles based on their experience.
+        3. Extract a comprehensive list of technical and soft skills.
+        4. Estimate their total years of professional experience.
+        5. Write a concise 2-3 sentence experience summary.
+        6. Identify preferred industries based on their work history.
         
         OUTPUT FORMAT: JSON matching a partial UserProfile schema.
         Include: full_name, email, phone, location, target_roles, skills, years_of_experience, experience_summary, preferred_industries.

@@ -68,8 +68,12 @@ service cloud.firestore {
 
     function isAdmin() {
       return isAuthenticated() &&
-        (exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
-          (request.auth.token.email == "franklinvidal198@gmail.com" && request.auth.token.email_verified == true));
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid));
+    }
+
+    function isRecent(time) {
+      return time > request.time - duration.value(5, 'm') &&
+             time < request.time + duration.value(5, 'm');
     }
 
     function isValidEmail(email) {
@@ -99,13 +103,17 @@ service cloud.firestore {
         'captured_at', 'status', 'id', 'requirements', 'required_skills', 
         'preferred_skills', 'experience_years_required', 'seniority', 
         'application_method', 'application_email', 'salary_info', 
-        'source_label', 'raw_excerpt', 'missing_fields', 'extraction_confidence'
+        'source_label', 'source_url', 'raw_excerpt', 'raw_content', 'missing_fields', 'extraction_confidence',
+        'analysis', 'analysis_at', 'analysis_profile_at', 'postgres_id'
       ];
-      let validStatuses = ["saved", "analyzed", "apply_now", "applied", "interview", "rejected", "offer", "archived", "follow_up"];
+      let validStatuses = ["saved", "captured", "analyzed", "apply_now", "applied", "interview", "rejected", "offer", "archived", "follow_up"];
       return hasOnlyAllowedFields(allowed) &&
              data.uid == request.auth.uid &&
              (data.title == null || (data.title is string && data.title.size() < 500)) &&
              (data.company == null || (data.company is string && data.company.size() < 500)) &&
+             (data.source_url == null || (data.source_url is string && data.source_url.size() < 2000)) &&
+             (data.raw_content == null || (data.raw_content is string && data.raw_content.size() < 1000000)) &&
+             (data.captured_at == null || data.captured_at is timestamp) &&
              data.status in validStatuses;
     }
 
@@ -167,6 +175,11 @@ service cloud.firestore {
     match /admins/{adminId} {
       allow read: if isAuthenticated();
       allow write: if false; // Only manageable via Firebase Console/Admin SDK
+    }
+
+    match /system/{docId} {
+      allow read: if true; // Public stats and content
+      allow write: if isAdmin();
     }
   }
 }

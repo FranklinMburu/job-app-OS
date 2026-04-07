@@ -27,16 +27,11 @@ def extract_text_from_image(image_data: str) -> str:
             model = get_model()
             if model:
                 # Prepare image for Gemini
-                image_parts = [
-                    {
-                        "mime_type": "image/png", # Defaulting to png, base64 decode handles most
-                        "data": image_bytes
-                    }
-                ]
+                img = Image.open(io.BytesIO(image_bytes))
                 
                 prompt = "Extract all the text from this image exactly as it appears. If it's a job posting, ensure all details are captured."
                 
-                response = model.generate_content([prompt, image_parts[0]])
+                response = model.generate_content([prompt, img])
                 if response and response.text:
                     logger.info("OCR successful using Gemini Vision")
                     return response.text

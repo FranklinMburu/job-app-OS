@@ -54,6 +54,7 @@ import {
   Database,
   Eye
 } from 'lucide-react';
+import { RawDataViewer } from './components/RawDataViewer';
 import ReactMarkdown from 'react-markdown';
 import { 
   BarChart, 
@@ -81,6 +82,7 @@ import {
   ApplyRecommendation,
   Confidence
 } from './types';
+import { trackingService, JobTrackingRecord } from './services/trackingService';
 import { GlassCard, NeonButton, FuturisticInput, FuturisticTextarea, cn } from './components/UI';
 import { 
   auth, 
@@ -90,18 +92,22 @@ import {
   getUserProfile, 
   saveJob, 
   updateJobStatus, 
+  updateJob,
   saveApplication,
   deleteJob,
   deleteApplication,
   bulkDeleteJobs,
   bulkUpdateJobStatus,
   bulkDeleteApplications,
-  db
+  db,
+  handleFirestoreError,
+  OperationType
 } from './lib/firebase';
 import { onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
-import { collection, query, where, onSnapshot, orderBy, getDoc, doc } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, orderBy, getDoc, doc, Timestamp } from 'firebase/firestore';
+import { aiService } from './services/aiService';
 
-const API_BASE = '/api';
+const API_BASE = '/app-backend-v1';
 
 // Error Boundary Component
 class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean, error: any }> {
@@ -149,12 +155,15 @@ export default function App() {
 }
 
 function AppContent() {
-  const [step, setStep] = useState<'landing' | 'dashboard' | 'profile' | 'capture' | 'results' | 'inbox' | 'applications' | 'logs' | 'database'>('landing');
+  const [step, setStep] = useState<'landing' | 'dashboard' | 'profile' | 'capture' | 'results' | 'inbox' | 'applications' | 'logs' | 'database' | 'tracking'>('landing');
   const [loading, setLoading] = useState(false);
   const [loadingAnalysis, setLoadingAnalysis] = useState(false);
   const [loadingMessage, setLoadingMessage] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [debugText, setDebugText] = useState<string | null>(null);
   const [authLoading, setAuthLoading] = useState(false);
+  const [showRawData, setShowRawData] = useState(false);
+  const [rawDataJob, setRawDataJob] = useState<ExtractedJob | null>(null);
 
   // Auth State
   const [user, setUser] = useState<FirebaseUser | null>(null);
@@ -198,6 +207,8 @@ function AppContent() {
   const [analysis, setAnalysis] = useState<JobAnalysis | null>(null);
   const [generatedApp, setGeneratedApp] = useState<GeneratedApplication | null>(null);
   const [aiLogs, setAiLogs] = useState<any[]>([]);
+  const [systemStats, setSystemStats] = useState<any>(null);
+  const [systemContent, setSystemContent] = useState<any>(null);
   const [appTone, setAppTone] = useState<Tone>(Tone.professional);
   const [appMode, setAppMode] = useState<OutputMode>(OutputMode.email);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
@@ -205,10 +216,71 @@ function AppContent() {
   // Firestore Data
   const [jobs, setJobs] = useState<ExtractedJob[]>([]);
   const [applications, setApplications] = useState<GeneratedApplication[]>([]);
+  const [trackingRecords, setTrackingRecords] = useState<JobTrackingRecord[]>([]);
 
   const [selectedJobIds, setSelectedJobIds] = useState<string[]>([]);
   const [selectedAppIds, setSelectedAppIds] = useState<string[]>([]);
   const [inboxFilter, setInboxFilter] = useState<JobStatus | 'all'>('all');
+
+  useEffect(() => {
+    const unsub = onSnapshot(doc(db, 'system', 'stats'), (snap) => {
+      if (snap.exists()) {
+        setSystemStats(snap.data());
+      } else {
+        // Fallback to initial if not in DB yet
+        setSystemStats({
+          nodes: "2,060+",
+          jobs: "1.2M",
+          success: "98.4%",
+          latency: "14ms"
+        });
+      }
+    }, (error) => {
+      console.error("System stats fetch error:", error);
+    });
+    return () => unsub();
+  }, []);
+
+  useEffect(() => {
+    const unsub = onSnapshot(doc(db, 'system', 'content'), (snap) => {
+      if (snap.exists()) {
+        setSystemContent(snap.data());
+      } else {
+        setSystemContent({
+          loading_messages: [
+            "Analyzing neural patterns in job requirements...",
+            "Cross-referencing your skills with the future of work...",
+            "Synthesizing optimal application strategy...",
+            "Extracting core essence from the job description...",
+            "Aligning career trajectories with market demands...",
+          ],
+          features: [
+            { 
+              title: "Smart Capture", 
+              desc: "Neural extraction from any URL, text, or visual data stream.",
+              icon: "Search",
+              color: "blue"
+            },
+            { 
+              title: "Neural Fit", 
+              desc: "Advanced gap analysis against your unique professional profile.",
+              icon: "Target",
+              color: "orange"
+            },
+            { 
+              title: "Instant Apply", 
+              desc: "Synthesize high-conversion application content in milliseconds.",
+              icon: "Zap",
+              color: "purple"
+            }
+          ]
+        });
+      }
+    }, (error) => {
+      console.error("System content fetch error:", error);
+    });
+    return () => unsub();
+  }, []);
 
   // Auth Effect
   useEffect(() => {
@@ -236,10 +308,60 @@ function AppContent() {
       const q = query(collection(db, 'ai_logs'), orderBy('timestamp', 'desc'));
       const unsubscribe = onSnapshot(q, (snap) => {
         setAiLogs(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      }, (error) => {
+        handleFirestoreError(error, OperationType.GET, 'ai_logs');
       });
       return () => unsubscribe();
     }
   }, [isAdmin, step]);
+
+  const getActivityData = () => {
+    const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const data = [];
+    const now = new Date();
+    
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date();
+      d.setDate(now.getDate() - i);
+      const dayName = days[d.getDay()];
+      const dayStart = new Date(d.setHours(0, 0, 0, 0)).getTime();
+      const dayEnd = new Date(d.setHours(23, 59, 59, 999)).getTime();
+      
+      const dayJobs = jobs.filter(j => {
+        const capturedAt = j.captured_at?.seconds ? j.captured_at.seconds * 1000 : 
+                          j.captured_at instanceof Date ? j.captured_at.getTime() : 0;
+        return capturedAt >= dayStart && capturedAt <= dayEnd;
+      }).length;
+      
+      const dayApps = applications.filter(a => {
+        const appliedAt = a.applied_at?.seconds ? a.applied_at.seconds * 1000 : 
+                         a.applied_at instanceof Date ? a.applied_at.getTime() : 0;
+        return appliedAt >= dayStart && appliedAt <= dayEnd;
+      }).length;
+      
+      data.push({ name: dayName, apps: dayApps, captures: dayJobs });
+    }
+    return data;
+  };
+
+  const getTrend = (type: 'jobs' | 'apps') => {
+    const now = new Date().getTime();
+    const week = 7 * 24 * 60 * 60 * 1000;
+    
+    const currentWeek = (type === 'jobs' ? jobs : applications).filter(item => {
+      const ts = (item as any).captured_at?.seconds || (item as any).applied_at?.seconds;
+      return ts && (ts * 1000) > (now - week);
+    }).length;
+    
+    const lastWeek = (type === 'jobs' ? jobs : applications).filter(item => {
+      const ts = (item as any).captured_at?.seconds || (item as any).applied_at?.seconds;
+      return ts && (ts * 1000) > (now - 2 * week) && (ts * 1000) <= (now - week);
+    }).length;
+    
+    if (lastWeek === 0) return currentWeek > 0 ? `+${currentWeek}` : "0%";
+    const diff = ((currentWeek - lastWeek) / lastWeek) * 100;
+    return `${diff >= 0 ? '+' : ''}${Math.round(diff)}%`;
+  };
 
   const handleSignIn = async () => {
     setAuthLoading(true);
@@ -274,6 +396,8 @@ function AppContent() {
     );
     const unsubJobs = onSnapshot(jobsQuery, (snap) => {
       setJobs(snap.docs.map(d => ({ id: d.id, ...d.data() } as ExtractedJob)));
+    }, (error) => {
+      handleFirestoreError(error, OperationType.GET, 'jobs');
     });
 
     const appsQuery = query(
@@ -283,6 +407,8 @@ function AppContent() {
     );
     const unsubApps = onSnapshot(appsQuery, (snap) => {
       setApplications(snap.docs.map(d => ({ id: d.id, ...d.data() } as GeneratedApplication)));
+    }, (error) => {
+      handleFirestoreError(error, OperationType.GET, 'applications');
     });
 
     return () => {
@@ -291,8 +417,19 @@ function AppContent() {
     };
   }, [user]);
 
+  // Postgres Tracking Sync
+  useEffect(() => {
+    if (user && (step === 'dashboard' || step === 'tracking')) {
+      user.getIdToken().then(token => {
+        trackingService.getJobs(user.uid, token)
+          .then(setTrackingRecords)
+          .catch(err => console.error("Failed to fetch tracking records:", err));
+      });
+    }
+  }, [user, step, jobs]);
+
   // Loading messages for AI tasks
-  const loadingMessages = [
+  const loadingMessages = systemContent?.loading_messages || [
     "Analyzing neural patterns in job requirements...",
     "Cross-referencing your skills with the future of work...",
     "Synthesizing optimal application strategy...",
@@ -302,8 +439,26 @@ function AppContent() {
   ];
 
   useEffect(() => {
+    if (step === 'results' && extractedJob?.id) {
+      // Find the latest job data from the synced list
+      const currentJob = jobs.find(j => j.id === extractedJob.id);
+      if (currentJob?.analysis) {
+        setAnalysis(currentJob.analysis);
+      } else if (!analysis && !loadingAnalysis) {
+        handleAnalyze(extractedJob);
+      }
+
+      // Find the latest application for this job
+      const lastApp = applications.find(a => a.job_id === extractedJob.id);
+      if (lastApp && !generatedApp) {
+        setGeneratedApp(lastApp);
+      }
+    }
+  }, [step, extractedJob?.id, jobs, applications]);
+  
+  useEffect(() => {
     let interval: any;
-    if (loading) {
+    if (loading || loadingAnalysis) {
       let i = 0;
       setLoadingMessage(loadingMessages[0]);
       interval = setInterval(() => {
@@ -312,33 +467,48 @@ function AppContent() {
       }, 3000);
     }
     return () => clearInterval(interval);
-  }, [loading]);
+  }, [loading, loadingAnalysis, loadingMessages]);
 
   // API Calls
   const handleExtract = async () => {
+    if (!captureInput.value) {
+      setError('Please provide a job description, URL, or image.');
+      return;
+    }
+
+    if (captureInput.type === SourceType.link && !captureInput.value.startsWith('http')) {
+      setError('Please provide a valid URL starting with http:// or https://');
+      return;
+    }
+
     setLoading(true);
     setError(null);
+    setDebugText(null);
     setAnalysis(null);
     setGeneratedApp(null);
     try {
-      const res = await fetch(`${API_BASE}/extract-job`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          source_type: captureInput.type, 
-          url: captureInput.type === SourceType.link ? captureInput.value : undefined,
-          raw_text: captureInput.type === SourceType.text ? captureInput.value : undefined,
-          image_reference: captureInput.type === SourceType.image ? captureInput.value : undefined,
-          user_id: user?.uid || 'anonymous'
-        })
-      });
+      let content = captureInput.value;
 
-      if (!res.ok) {
-        const errData = await res.json();
-        throw new Error(errData.detail?.detail || errData.detail || 'Extraction failed');
+      // Handle URL fetching
+      if (captureInput.type === SourceType.link) {
+        const res = await fetch(`${API_BASE}/fetch-url`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url: captureInput.value })
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          throw new Error(data.error || data.detail || 'Failed to fetch job page');
+        }
+        content = data.content;
+        setDebugText(content.substring(0, 500) + '...');
       }
 
-      const data = await res.json();
+      // Use AI Service for extraction
+      const data = await aiService.extractJob(content, captureInput.type);
+      if (captureInput.type === SourceType.link) {
+        data.source_url = captureInput.value;
+      }
       setExtractedJob(data);
 
       // Save to Firestore if logged in
@@ -365,16 +535,7 @@ function AppContent() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`${API_BASE}/profile/synthesize`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          cv_text: profile.cv_text,
-          user_id: user?.uid || 'anonymous'
-        })
-      });
-      if (!res.ok) throw new Error('Synthesis failed');
-      const data = await res.json();
+      const data = await aiService.synthesizeProfile(profile.cv_text);
       setProfile(prev => ({
         ...prev,
         ...data,
@@ -409,7 +570,7 @@ function AppContent() {
     try {
       await saveApplication(user.uid, extractedJob.id || 'unknown', generatedApp);
       const newStatus = generatedApp.subject?.startsWith('Follow-up:') ? JobStatus.follow_up : JobStatus.applied;
-      await updateJobStatus(extractedJob.id || 'unknown', newStatus);
+      await updateJobStatus(extractedJob.id || 'unknown', newStatus, extractedJob.postgres_id);
       setStep('applications');
     } catch (err: any) {
       setError(err.message);
@@ -475,41 +636,33 @@ function AppContent() {
 
   const handleAnalyze = async (job: ExtractedJob) => {
     if (loadingAnalysis) return;
-    console.log("[AI Fit Match] Starting analysis for job:", job.title);
+    
+    // Check for cached analysis
+    const isProfileUnchanged = job.analysis_profile_at && profile.updated_at && 
+      (typeof job.analysis_profile_at.toMillis === 'function' ? job.analysis_profile_at.toMillis() : job.analysis_profile_at) === 
+      (typeof profile.updated_at.toMillis === 'function' ? profile.updated_at.toMillis() : profile.updated_at);
+
+    if (job.analysis && isProfileUnchanged) {
+      console.log("[AI Fit Match] Using cached analysis for job:", job.title);
+      setAnalysis(job.analysis);
+      return;
+    }
+
+    console.log("[AI Fit Match] Starting fresh analysis for job:", job.title);
     setLoadingAnalysis(true);
     setError(null);
     setAnalysis(null);
     try {
-      const startTime = Date.now();
-      const res = await fetch(`${API_BASE}/analyze-job`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          job, 
-          user_profile: {
-            ...profile,
-            phone: profile.linkedin_url,
-            years_of_experience: "5",
-            tone_preference: "professional"
-          },
-          user_id: user?.uid || 'anonymous'
-        })
-      });
-      
-      const duration = Date.now() - startTime;
-      console.log(`[AI Fit Match] Backend request finished in ${duration}ms. Status: ${res.status}`);
-      
-      if (!res.ok) {
-        const errData = await res.json();
-        console.error("[AI Fit Match] Backend error:", errData);
-        throw new Error(errData.detail?.detail || errData.detail || 'AI Fit Match failed. Please try again.');
-      }
-      
-      const data = await res.json();
+      const data = await aiService.analyzeJob(job, profile);
       console.log("[AI Fit Match] Analysis data received:", data);
       setAnalysis(data);
       if (job.id) {
-        await updateJobStatus(job.id, JobStatus.analyzed);
+        await updateJob(job.id, {
+          analysis: data,
+          analysis_at: Timestamp.now(),
+          analysis_profile_at: profile.updated_at || null,
+          status: JobStatus.analyzed
+        });
       }
     } catch (err: any) {
       setError(err.message);
@@ -525,28 +678,16 @@ function AppContent() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`${API_BASE}/generate-application`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          job: extractedJob,
-          analysis,
-          user_profile: {
-            ...profile,
-            phone: profile.linkedin_url,
-            years_of_experience: "5",
-            tone_preference: appTone
-          },
-          output_mode: appMode,
-          tone: appTone,
-          user_id: user?.uid || 'anonymous'
-        })
-      });
-      if (!res.ok) throw new Error('Generation failed');
-      const data = await res.json();
+      const data = await aiService.generateApplication(
+        extractedJob,
+        analysis,
+        profile,
+        appMode,
+        appTone
+      );
       setGeneratedApp(data);
       if (extractedJob?.id) {
-        await updateJobStatus(extractedJob.id, JobStatus.apply_now);
+        await updateJobStatus(extractedJob.id, JobStatus.apply_now, extractedJob.postgres_id);
       }
     } catch (err: any) {
       setError(err.message);
@@ -558,32 +699,7 @@ function AppContent() {
   const handleFollowUp = async (job: ExtractedJob, app: GeneratedApplication) => {
     setLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/generate-follow-up`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          job,
-          analysis: {
-            verdict: Verdict.relevant,
-            apply_recommendation: ApplyRecommendation.apply,
-            reasons: [app.email_body || ''],
-            gaps: [],
-            confidence: Confidence.high,
-            fit_summary: 'Follow-up context'
-          },
-          user_profile: {
-            ...profile,
-            phone: profile.linkedin_url,
-            years_of_experience: "5",
-            tone_preference: "professional"
-          },
-          output_mode: OutputMode.email,
-          tone: Tone.professional,
-          user_id: user?.uid || 'anonymous'
-        })
-      });
-      if (!res.ok) throw new Error('Follow-up generation failed');
-      const data = await res.json();
+      const data = await aiService.generateFollowUp(job, profile, app);
       
       // Create a temporary "application" object to show in results
       const followUpApp: GeneratedApplication = {
@@ -822,29 +938,12 @@ function AppContent() {
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-8 w-full max-w-5xl relative z-10">
-                {[
-                  { 
-                    icon: <Search className="text-neon-blue" />, 
-                    title: "Smart Capture", 
-                    desc: "Neural extraction from any URL, text, or visual data stream.",
-                    color: "blue"
-                  },
-                  { 
-                    icon: <Target className="text-neon-orange" />, 
-                    title: "Neural Fit", 
-                    desc: "Advanced gap analysis against your unique professional profile.",
-                    color: "orange"
-                  },
-                  { 
-                    icon: <Zap className="text-neon-purple" />, 
-                    title: "Instant Apply", 
-                    desc: "Synthesize high-conversion application content in milliseconds.",
-                    color: "purple"
-                  }
-                ].map((feature, i) => (
+                {(systemContent?.features || []).map((feature: any, i: number) => (
                   <GlassCard key={i} className="group flex flex-col items-center text-center p-10 space-y-6 hover:bg-white/5 transition-all duration-500 border-white/5 hover:border-white/20">
                     <div className={`w-16 h-16 rounded-2xl bg-white/5 flex items-center justify-center group-hover:scale-110 group-hover:rotate-3 transition-transform duration-500`}>
-                      {feature.icon}
+                      {feature.icon === 'Search' ? <Search className="text-neon-blue" /> : 
+                       feature.icon === 'Target' ? <Target className="text-neon-orange" /> : 
+                       <Zap className="text-neon-purple" />}
                     </div>
                     <div className="space-y-2">
                       <h3 className="font-black text-2xl uppercase tracking-tight group-hover:text-neon-blue transition-colors">{feature.title}</h3>
@@ -871,10 +970,10 @@ function AppContent() {
               {/* Stats Section */}
               <div className="grid grid-cols-2 md:grid-cols-4 gap-8 w-full max-w-4xl relative z-10 pt-8">
                 {[
-                  { label: "Neural Nodes", value: "2,060+" },
-                  { label: "Jobs Synthesized", value: "1.2M" },
-                  { label: "Success Rate", value: "98.4%" },
-                  { label: "Latency", value: "14ms" }
+                  { label: "Neural Nodes", value: systemStats?.nodes || "..." },
+                  { label: "Jobs Synthesized", value: systemStats?.jobs || "..." },
+                  { label: "Success Rate", value: systemStats?.success || "..." },
+                  { label: "Latency", value: systemStats?.latency || "..." }
                 ].map((stat, i) => (
                   <div key={i} className="text-center space-y-1">
                     <p className="text-[10px] font-black text-white/20 uppercase tracking-widest">{stat.label}</p>
@@ -915,21 +1014,25 @@ function AppContent() {
               {/* Metrics Grid */}
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
                 {[
-                  { label: "Total Captured", value: jobs.length, icon: <Inbox className="text-neon-blue" />, trend: "+12%", color: "blue" },
-                  { label: "Applications Sent", value: applications.length, icon: <Send className="text-neon-purple" />, trend: "+5%", color: "purple" },
-                  { label: "Follow-ups Needed", value: jobs.filter(j => j.status === JobStatus.follow_up).length, icon: <Mail className="text-neon-orange" />, trend: "Active", color: "orange" },
-                  { label: "Profile Strength", value: `${Math.min(100, Math.round((profile.cv_text.length / 500) * 100))}%`, icon: <User className="text-neon-blue" />, trend: profile.cv_text.length >= 500 ? "Complete" : "Improve", color: "blue" }
+                  { label: "Total Captured", value: jobs.length, icon: <Inbox className="text-neon-blue" />, trend: getTrend('jobs'), color: "blue", action: () => setStep('inbox') },
+                  { label: "Applications Sent", value: applications.length, icon: <Send className="text-neon-purple" />, trend: getTrend('apps'), color: "purple", action: () => setStep('applications') },
+                  { label: "Follow-ups Needed", value: jobs.filter(j => j.status === JobStatus.follow_up).length, icon: <Mail className="text-neon-orange" />, trend: "Active", color: "orange", action: () => { setInboxFilter(JobStatus.follow_up); setStep('inbox'); } },
+                  { label: "Profile Strength", value: `${Math.min(100, Math.round((profile.cv_text.length / 500) * 100))}%`, icon: <User className="text-neon-blue" />, trend: profile.cv_text.length >= 500 ? "Complete" : "Improve", color: "blue", action: () => setStep('profile') }
                 ].map((metric, i) => (
-                  <GlassCard key={i} className="p-6 space-y-4">
+                  <GlassCard 
+                    key={i} 
+                    className="p-6 space-y-4 cursor-pointer hover:border-white/20 hover:bg-white/5 transition-all group"
+                    onClick={metric.action}
+                  >
                     <div className="flex items-center justify-between">
-                      <div className="w-10 h-10 rounded-lg bg-white/5 flex items-center justify-center">
+                      <div className="w-10 h-10 rounded-lg bg-white/5 flex items-center justify-center group-hover:bg-white/10 transition-colors">
                         {metric.icon}
                       </div>
                       <span className="text-[10px] font-mono text-green-400">{metric.trend}</span>
                     </div>
                     <div>
-                      <p className="text-[10px] uppercase font-bold tracking-widest text-white/40">{metric.label}</p>
-                      <h3 className="text-3xl font-black tracking-tighter">{metric.value}</h3>
+                      <p className="text-[10px] uppercase font-bold tracking-widest text-white/40 group-hover:text-white/60 transition-colors">{metric.label}</p>
+                      <h3 className="text-3xl font-black tracking-tighter group-hover:text-neon-blue transition-colors">{metric.value}</h3>
                     </div>
                   </GlassCard>
                 ))}
@@ -950,15 +1053,7 @@ function AppContent() {
                   </div>
                   <div className="h-[300px] w-full">
                     <ResponsiveContainer width="100%" height="100%">
-                      <AreaChart data={[
-                        { name: 'Mon', apps: 2, captures: 4 },
-                        { name: 'Tue', apps: 5, captures: 7 },
-                        { name: 'Wed', apps: 3, captures: 5 },
-                        { name: 'Thu', apps: 8, captures: 12 },
-                        { name: 'Fri', apps: 6, captures: 9 },
-                        { name: 'Sat', apps: 4, captures: 6 },
-                        { name: 'Sun', apps: 7, captures: 10 },
-                      ]}>
+                      <AreaChart data={getActivityData()}>
                         <defs>
                           <linearGradient id="colorApps" x1="0" y1="0" x2="0" y2="1">
                             <stop offset="5%" stopColor="#00f2ff" stopOpacity={0.3}/>
@@ -1130,7 +1225,7 @@ function AppContent() {
                     </NeonButton>
                   </div>
                   <div className="flex flex-wrap gap-2">
-                    {profile.skills.map(skill => (
+                    {(profile.skills || []).map(skill => (
                       <span key={skill} className="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-neon-blue/10 border border-neon-blue/30 text-neon-blue text-xs">
                         {skill}
                         <button onClick={() => removeSkill(skill)} className="hover:text-white transition-colors">
@@ -1208,7 +1303,10 @@ function AppContent() {
                   ].map(tab => (
                     <button
                       key={tab.id}
-                      onClick={() => setCaptureInput({ type: tab.id, value: '' })}
+                      onClick={() => {
+                        setCaptureInput({ type: tab.id, value: '' });
+                        setError(null);
+                      }}
                       className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-lg transition-all ${captureInput.type === tab.id ? 'bg-neon-blue/20 text-neon-blue border border-neon-blue/30 shadow-[0_0_10px_rgba(0,243,255,0.1)]' : 'text-white/40 hover:text-white/60'}`}
                     >
                       {tab.icon} <span className="text-xs font-bold uppercase tracking-widest">{tab.label}</span>
@@ -1238,7 +1336,11 @@ function AppContent() {
                         <div className="relative w-full h-full flex items-center justify-center">
                           <img src={captureInput.value} alt="Preview" className="max-h-[300px] rounded-lg shadow-2xl" />
                           <button 
-                            onClick={(e) => { e.stopPropagation(); setCaptureInput({ ...captureInput, value: '' }); }}
+                            onClick={(e) => { 
+                              e.stopPropagation(); 
+                              setCaptureInput({ ...captureInput, value: '' }); 
+                              setError(null);
+                            }}
                             className="absolute top-2 right-2 p-2 bg-black/50 rounded-full hover:bg-red-500/50 transition-colors z-20"
                           >
                             <X size={16} />
@@ -1296,9 +1398,16 @@ function AppContent() {
                 )}
                 
                 {error && (
-                  <div className="p-4 rounded-lg bg-red-500/10 border border-red-500/30 text-red-400 text-sm flex items-start gap-3">
-                    <AlertCircle className="shrink-0" size={18} />
-                    <p>{error}</p>
+                  <div className="p-4 rounded-lg bg-red-500/10 border border-red-500/30 text-red-400 text-sm flex flex-col gap-3">
+                    <div className="flex items-start gap-3">
+                      <AlertCircle className="shrink-0" size={18} />
+                      <p>{error}</p>
+                    </div>
+                    {debugText && (
+                      <div className="mt-2 p-2 bg-black/40 rounded border border-red-500/10 text-[10px] font-mono text-red-400/60 overflow-hidden break-all">
+                        Scraped: {debugText}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -1323,12 +1432,36 @@ function AppContent() {
                     <ArrowLeft size={20} />
                   </button>
                   <h2 className="text-2xl font-bold tracking-tight">JOB <span className="text-neon-blue">ANALYSIS</span></h2>
+                  <button 
+                    onClick={() => {
+                      setRawDataJob(extractedJob);
+                      setShowRawData(true);
+                    }}
+                    className="ml-auto flex items-center gap-2 px-3 py-1.5 rounded-lg border border-white/10 hover:bg-white/5 text-[10px] font-bold uppercase tracking-widest text-white/40 transition-all"
+                  >
+                    <Eye size={14} /> View Raw Source
+                  </button>
                 </div>
 
                 <GlassCard className="space-y-6">
                   <div className="space-y-2">
                     <div className="flex justify-between items-start">
-                      <h3 className="text-3xl font-black tracking-tighter leading-tight">{extractedJob.title}</h3>
+                      <div className="space-y-1">
+                        <h3 className="text-3xl font-black tracking-tighter leading-tight">{extractedJob.title}</h3>
+                        <div className="flex items-center gap-3">
+                          <p className="text-sm text-white/40 font-bold uppercase tracking-widest">{extractedJob.company}</p>
+                          {extractedJob.source_url && (
+                            <a 
+                              href={extractedJob.source_url} 
+                              target="_blank" 
+                              rel="noopener noreferrer"
+                              className="text-xs text-neon-blue hover:underline flex items-center gap-1 transition-all"
+                            >
+                              <LinkIcon size={12} /> Original Source
+                            </a>
+                          )}
+                        </div>
+                      </div>
                       <div className="flex flex-wrap gap-2 items-center">
                         <select 
                           className={cn(
@@ -1345,7 +1478,7 @@ function AppContent() {
                             const newStatus = e.target.value as JobStatus;
                             if (extractedJob.id && user) {
                               try {
-                                await updateJobStatus(extractedJob.id, newStatus);
+                                await updateJobStatus(extractedJob.id, newStatus, extractedJob.postgres_id);
                                 setExtractedJob({ ...extractedJob, status: newStatus });
                               } catch (err: any) {
                                 setError(err.message);
@@ -1391,7 +1524,7 @@ function AppContent() {
                     <div className="space-y-4">
                       <h4 className="text-[10px] uppercase font-bold tracking-[0.3em] text-white/40 border-b border-white/5 pb-2">Required Skills</h4>
                       <div className="flex flex-wrap gap-2">
-                        {extractedJob.required_skills.map(skill => (
+                        {(extractedJob.required_skills || []).map(skill => (
                           <span key={skill} className="px-2 py-1 rounded bg-white/5 border border-white/10 text-[10px] text-white/60">
                             {skill}
                           </span>
@@ -1401,7 +1534,7 @@ function AppContent() {
                     <div className="space-y-4">
                       <h4 className="text-[10px] uppercase font-bold tracking-[0.3em] text-white/40 border-b border-white/5 pb-2">Requirements</h4>
                       <ul className="space-y-2">
-                        {extractedJob.requirements.slice(0, 5).map((req, i) => (
+                        {(extractedJob.requirements || []).slice(0, 5).map((req, i) => (
                           <li key={i} className="text-xs text-white/50 flex gap-2">
                             <span className="text-neon-blue font-mono">•</span> {req}
                           </li>
@@ -1446,11 +1579,26 @@ function AppContent() {
                             Retry Analysis
                           </NeonButton>
                         </div>
-                      ) : (
+                      ) : loadingAnalysis ? (
                         <>
                           <div className="w-12 h-12 border-2 border-neon-blue/30 border-t-neon-blue rounded-full animate-spin mx-auto" />
                           <p className="text-xs text-white/40 font-mono uppercase tracking-widest">Processing Fit Analysis...</p>
                         </>
+                      ) : (
+                        <div className="p-6 rounded-xl bg-neon-blue/5 border border-neon-blue/20 text-center space-y-4">
+                          <Target className="mx-auto text-neon-blue opacity-50" size={32} />
+                          <div className="space-y-1">
+                            <p className="text-sm font-bold text-white/90">Fit Match Ready</p>
+                            <p className="text-[10px] text-white/40 uppercase tracking-widest">Analyze this job against your profile</p>
+                          </div>
+                          <NeonButton 
+                            variant="blue" 
+                            className="w-full py-3"
+                            onClick={() => extractedJob && handleAnalyze(extractedJob)}
+                          >
+                            Run Fit Match
+                          </NeonButton>
+                        </div>
                       )}
                     </div>
                   ) : (
@@ -1468,7 +1616,7 @@ function AppContent() {
                         <div className="space-y-2">
                           <h4 className="text-[10px] uppercase font-bold tracking-widest text-white/40">Key Strengths</h4>
                           <div className="space-y-1.5">
-                            {analysis.reasons.map((reason, i) => (
+                            {(analysis.reasons || []).map((reason, i) => (
                               <div key={i} className="text-xs text-green-400/80 flex gap-2">
                                 <CheckCircle2 size={12} className="shrink-0 mt-0.5" /> {reason}
                               </div>
@@ -1476,11 +1624,11 @@ function AppContent() {
                           </div>
                         </div>
                         
-                        {analysis.gaps.length > 0 && (
+                        {(analysis.gaps || []).length > 0 && (
                           <div className="space-y-2">
                             <h4 className="text-[10px] uppercase font-bold tracking-widest text-white/40">Potential Gaps</h4>
                             <div className="space-y-1.5">
-                              {analysis.gaps.map((gap, i) => (
+                              {(analysis.gaps || []).map((gap, i) => (
                                 <div key={i} className="text-xs text-orange-400/80 flex gap-2">
                                   <AlertCircle size={12} className="shrink-0 mt-0.5" /> {gap}
                                 </div>
@@ -1663,7 +1811,7 @@ function AppContent() {
                                 const newStatus = e.target.value as JobStatus;
                                 if (job.id && user) {
                                   try {
-                                    await updateJobStatus(job.id, newStatus);
+                                    await updateJobStatus(job.id, newStatus, job.postgres_id);
                                   } catch (err: any) {
                                     setError(err.message);
                                   }
@@ -1883,10 +2031,18 @@ function AppContent() {
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                   {jobs.filter(j => inboxFilter === 'all' || j.status === inboxFilter).map(job => (
-                    <GlassCard key={job.id} className={cn(
-                      "group hover:border-neon-blue/50 transition-all flex flex-col relative",
-                      selectedJobIds.includes(job.id!) && "border-neon-blue/50 bg-neon-blue/5"
-                    )}>
+                    <GlassCard 
+                      key={job.id} 
+                      className={cn(
+                        "group hover:border-neon-blue/50 transition-all flex flex-col relative cursor-pointer",
+                        selectedJobIds.includes(job.id!) && "border-neon-blue/50 bg-neon-blue/5"
+                      )}
+                      onClick={() => {
+                        setExtractedJob(job);
+                        setStep('results');
+                        handleAnalyze(job);
+                      }}
+                    >
                       <div className="absolute top-4 left-4 z-10">
                         <button 
                           onClick={(e) => {
@@ -1908,14 +2064,43 @@ function AppContent() {
                       <div className="flex justify-between items-start mb-4 pl-8">
                         <div className="space-y-1">
                           <h3 className="font-bold text-lg leading-tight group-hover:text-neon-blue transition-colors">{job.title}</h3>
-                          <p className="text-xs text-white/40 font-bold uppercase tracking-widest">{job.company}</p>
+                          <div className="flex items-center gap-2">
+                            <p className="text-xs text-white/40 font-bold uppercase tracking-widest">{job.company}</p>
+                            {job.source_url && (
+                              <a 
+                                href={job.source_url} 
+                                target="_blank" 
+                                rel="noopener noreferrer"
+                                onClick={(e) => e.stopPropagation()}
+                                className="text-[10px] text-neon-blue/60 hover:text-neon-blue flex items-center gap-1 transition-colors"
+                              >
+                                <LinkIcon size={10} /> Source
+                              </a>
+                            )}
+                          </div>
                         </div>
-                        <button 
-                          onClick={() => job.id && handleDeleteJob(job.id)}
-                          className="p-1.5 rounded-lg hover:bg-red-500/10 text-white/20 hover:text-red-400 transition-all"
-                        >
-                          <Trash2 size={14} />
-                        </button>
+                        <div className="flex items-center gap-1">
+                          <button 
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setRawDataJob(job);
+                              setShowRawData(true);
+                            }}
+                            className="p-1.5 rounded-lg hover:bg-white/10 text-white/20 hover:text-neon-blue transition-all"
+                            title="View Raw Source"
+                          >
+                            <Eye size={14} />
+                          </button>
+                          <button 
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              job.id && handleDeleteJob(job.id);
+                            }}
+                            className="p-1.5 rounded-lg hover:bg-red-500/10 text-white/20 hover:text-red-400 transition-all"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
                       </div>
                       
                       <div className="space-y-3 flex-1">
@@ -1924,6 +2109,7 @@ function AppContent() {
                         </div>
                         <div className="flex flex-wrap gap-2 items-center">
                           <select 
+                            onClick={(e) => e.stopPropagation()}
                             className={cn(
                               "px-2 py-1 rounded-full text-[10px] font-black uppercase tracking-widest border bg-transparent focus:outline-none transition-all cursor-pointer",
                               job.status === JobStatus.applied ? 'bg-green-500/10 border-green-500/30 text-green-400' :
@@ -1935,10 +2121,11 @@ function AppContent() {
                             )}
                             value={job.status || JobStatus.saved}
                             onChange={async (e) => {
+                              e.stopPropagation();
                               const newStatus = e.target.value as JobStatus;
                               if (job.id && user) {
                                 try {
-                                  await updateJobStatus(job.id, newStatus);
+                                  await updateJobStatus(job.id, newStatus, job.postgres_id);
                                 } catch (err: any) {
                                   setError(err.message);
                                 }
@@ -1958,7 +2145,8 @@ function AppContent() {
                         <NeonButton 
                           variant="blue" 
                           className="flex-1 !py-2 !text-[10px]"
-                          onClick={() => {
+                          onClick={(e) => {
+                            e.stopPropagation();
                             setExtractedJob(job);
                             setStep('results');
                             handleAnalyze(job);
@@ -1968,7 +2156,8 @@ function AppContent() {
                         </NeonButton>
                         {(job.status === JobStatus.applied || job.status === JobStatus.follow_up) && (
                           <button 
-                            onClick={() => {
+                            onClick={(e) => {
+                              e.stopPropagation();
                               const app = applications.find(a => a.job_id === job.id);
                               if (app) handleFollowUp(job, app);
                             }}
@@ -1983,6 +2172,7 @@ function AppContent() {
                             href={job.application_url} 
                             target="_blank" 
                             rel="noopener noreferrer"
+                            onClick={(e) => e.stopPropagation()}
                             className="p-2 rounded-lg border border-white/10 hover:bg-white/5 text-white/40"
                           >
                             <ExternalLink size={14} />
@@ -2088,13 +2278,22 @@ function AppContent() {
                   {applications.map(app => {
                     const job = jobs.find(j => j.id === app.job_id);
                     return (
-                      <GlassCard key={app.id} className={cn(
-                        "flex flex-col md:flex-row gap-6 items-start md:items-center relative",
-                        selectedAppIds.includes(app.id!) && "border-neon-purple/50 bg-neon-purple/5"
-                      )}>
+                      <GlassCard 
+                        key={app.id} 
+                        className={cn(
+                          "flex flex-col md:flex-row gap-6 items-start md:items-center relative cursor-pointer group hover:border-neon-purple/50 transition-all",
+                          selectedAppIds.includes(app.id!) && "border-neon-purple/50 bg-neon-purple/5"
+                        )}
+                        onClick={() => {
+                          setGeneratedApp(app);
+                          if (job) setExtractedJob(job);
+                          setStep('results');
+                        }}
+                      >
                         <div className="absolute top-1/2 -translate-y-1/2 left-4 z-10 hidden md:block">
                           <button 
-                            onClick={() => {
+                            onClick={(e) => {
+                              e.stopPropagation();
                               if (app.id) {
                                 setSelectedAppIds(prev => 
                                   prev.includes(app.id!) 
@@ -2113,7 +2312,8 @@ function AppContent() {
                           <div className="flex items-center gap-3">
                             <div className="md:hidden">
                               <button 
-                                onClick={() => {
+                                onClick={(e) => {
+                                  e.stopPropagation();
                                   if (app.id) {
                                     setSelectedAppIds(prev => 
                                       prev.includes(app.id!) 
@@ -2127,7 +2327,7 @@ function AppContent() {
                                 {selectedAppIds.includes(app.id!) ? <CheckSquare size={18} /> : <Square size={18} className="opacity-20" />}
                               </button>
                             </div>
-                            <h3 className="font-bold text-lg">{job?.title || 'Unknown Job'}</h3>
+                            <h3 className="font-bold text-lg group-hover:text-neon-purple transition-colors">{job?.title || 'Unknown Job'}</h3>
                             {renderBadge(app.output_mode, 'purple')}
                           </div>
                           <p className="text-xs text-white/40 font-bold uppercase tracking-widest">{job?.company || 'Unknown Company'}</p>
@@ -2141,7 +2341,8 @@ function AppContent() {
                           <NeonButton 
                             variant="purple" 
                             className="flex-1 md:flex-none !py-2 !px-4 !text-[10px]"
-                            onClick={() => {
+                            onClick={(e) => {
+                              e.stopPropagation();
                               setGeneratedApp(app);
                               if (job) setExtractedJob(job);
                               setStep('results');
@@ -2150,7 +2351,8 @@ function AppContent() {
                             View Content
                           </NeonButton>
                           <button 
-                            onClick={() => {
+                            onClick={(e) => {
+                              e.stopPropagation();
                               if (job) handleFollowUp(job, app);
                             }}
                             className="p-2 rounded-lg hover:bg-neon-purple/10 text-white/20 hover:text-neon-purple transition-all"
@@ -2159,7 +2361,10 @@ function AppContent() {
                             <Mail size={18} />
                           </button>
                           <button 
-                            onClick={() => app.id && handleDeleteApplication(app.id)}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              app.id && handleDeleteApplication(app.id);
+                            }}
                             className="p-2 rounded-lg hover:bg-red-500/10 text-white/20 hover:text-red-400 transition-all"
                           >
                             <Trash2 size={18} />
@@ -2174,6 +2379,28 @@ function AppContent() {
           )}
         </AnimatePresence>
       </main>
+
+      <AnimatePresence>
+        {showRawData && rawDataJob && (
+          <RawDataViewer 
+            job={rawDataJob} 
+            onClose={() => {
+              setShowRawData(false);
+              setRawDataJob(null);
+            }} 
+            onSave={async (updatedJob) => {
+              if (updatedJob.id) {
+                await updateJob(updatedJob.id, updatedJob);
+                setRawDataJob(updatedJob);
+                // If the current extractedJob is the one being edited, update it too
+                if (extractedJob?.id === updatedJob.id) {
+                  setExtractedJob(updatedJob);
+                }
+              }
+            }}
+          />
+        )}
+      </AnimatePresence>
 
       {/* Footer Decoration */}
       <footer className="mt-20 py-10 border-t border-white/5 text-center space-y-4">

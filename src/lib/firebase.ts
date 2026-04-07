@@ -2,6 +2,8 @@ import { initializeApp } from 'firebase/app';
 import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
 import { getFirestore, collection, doc, setDoc, getDoc, getDocs, query, where, onSnapshot, updateDoc, deleteDoc, Timestamp, getDocFromServer, writeBatch } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
+import { ExtractedJob, JobStatus } from '../types';
+import { trackingService } from '../services/trackingService';
 
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
@@ -125,22 +127,87 @@ export const saveJob = async (uid: string, job: any) => {
   const path = 'jobs';
   try {
     const jobRef = doc(collection(db, 'jobs'));
-    await setDoc(jobRef, {
-      ...job,
+    
+    // Explicitly pick allowed fields to avoid "Missing or insufficient permissions" 
+    // caused by extraneous fields from AI hallucination
+    const sanitizedJob = {
       uid,
+      title: job.title || 'Untitled Job',
+      company: job.company || 'Unknown Company',
+      summary: job.summary || null,
+      location: job.location || null,
+      employment_type: job.employment_type || 'unknown',
+      remote_policy: job.remote_policy || 'unknown',
+      application_url: job.application_url || null,
+      deadline: job.deadline || null,
+      source_type: job.source_type || 'text',
+      source_label: job.source_label || null,
+      source_url: job.source_url || null,
+      raw_content: job.raw_content || null,
       captured_at: Timestamp.now(),
-      status: job.status || 'captured'
-    });
+      status: job.status || 'saved',
+      requirements: job.requirements || [],
+      required_skills: job.required_skills || [],
+      preferred_skills: job.preferred_skills || [],
+      experience_years_required: job.experience_years_required || null,
+      seniority: job.seniority || 'unknown',
+      application_method: job.application_method || 'unknown',
+      application_email: job.application_email || null,
+      salary_info: job.salary_info || null,
+      raw_excerpt: job.raw_excerpt || null,
+      missing_fields: job.missing_fields || [],
+      extraction_confidence: job.extraction_confidence || 'medium',
+      postgres_id: job.postgres_id || null
+    };
+
+    await setDoc(jobRef, sanitizedJob);
     return jobRef.id;
   } catch (error) {
     handleFirestoreError(error, OperationType.CREATE, path);
   }
 };
 
-export const updateJobStatus = async (jobId: string, status: string) => {
+export const updateJobStatus = async (jobId: string, status: JobStatus, postgresId?: number) => {
   const path = `jobs/${jobId}`;
   try {
     await updateDoc(doc(db, 'jobs', jobId), { status });
+    
+    // Sync with Postgres if ID is available
+    if (postgresId) {
+      try {
+        const token = await auth.currentUser?.getIdToken();
+        await trackingService.updateStatus(postgresId, status, jobId, token);
+      } catch (pgError) {
+        console.error("Failed to sync status to Postgres:", pgError);
+      }
+    }
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, path);
+  }
+};
+
+export const updateJob = async (jobId: string, job: Partial<ExtractedJob>) => {
+  const path = `jobs/${jobId}`;
+  try {
+    const jobRef = doc(db, 'jobs', jobId);
+    const allowedFields = [
+      'title', 'company', 'summary', 'location', 'employment_type', 
+      'remote_policy', 'application_url', 'deadline', 'source_type', 
+      'source_label', 'source_url', 'raw_content', 'status', 'requirements', 
+      'required_skills', 'preferred_skills', 'experience_years_required', 
+      'seniority', 'application_method', 'application_email', 
+      'salary_info', 'raw_excerpt', 'missing_fields', 'extraction_confidence',
+      'analysis', 'analysis_at', 'analysis_profile_at', 'postgres_id'
+    ];
+    
+    const updateData: any = {};
+    Object.keys(job).forEach(key => {
+      if (allowedFields.includes(key)) {
+        updateData[key] = (job as any)[key];
+      }
+    });
+
+    await updateDoc(jobRef, updateData);
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, path);
   }

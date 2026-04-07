@@ -32,8 +32,13 @@
         "application_url": { "type": "string" },
         "deadline": { "type": "string" },
         "source_type": { "type": "string" },
+        "source_url": { "type": "string", "format": "uri", "description": "Original URL input by user" },
+        "raw_content": { "type": "string", "description": "Original captured data (text, URL content, or image base64)" },
         "captured_at": { "type": "string", "format": "date-time" },
-        "status": { "type": "string", "enum": ["captured", "analyzed", "applied", "interviewing", "rejected", "offered", "archived"] }
+        "status": { "type": "string", "enum": ["captured", "analyzed", "applied", "interviewing", "rejected", "offered", "archived"] },
+        "analysis": { "type": "object" },
+        "analysis_at": { "type": "string", "format": "date-time" },
+        "analysis_profile_at": { "type": "string", "format": "date-time" }
       },
       "required": ["uid", "title", "company", "status"]
     },

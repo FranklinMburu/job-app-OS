@@ -1,14 +1,29 @@
+import logging
 from fastapi import FastAPI, Request, status, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exceptions import RequestValidationError
-from app.api.routes import jobs, profile
+from app.api.routes import jobs, profile, tracking
+from app.core.database import Base, engine
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title="Job Capture & Apply Assistant",
     description="Backend scaffold for job application automation",
     version="1.0.0"
 )
+
+@app.on_event("startup")
+async def startup_event():
+    logger.info("Starting up backend...")
+    try:
+        Base.metadata.create_all(bind=engine)
+        logger.info("Database tables created/verified.")
+    except Exception as e:
+        logger.error(f"Error creating database tables: {e}")
 
 # Enable CORS
 app.add_middleware(
@@ -50,6 +65,12 @@ async def http_exception_handler(request: Request, exc: HTTPException):
         }
     )
 
+# Health check
+@app.get("/app-backend-v1/health")
+async def health_check():
+    return {"status": "ok", "service": "job-capture-backend"}
+
 # Include routers
-app.include_router(jobs.router, prefix="/api", tags=["Jobs"])
-app.include_router(profile.router, prefix="/api/profile", tags=["Profile"])
+app.include_router(jobs.router, prefix="/app-backend-v1", tags=["Jobs"])
+app.include_router(profile.router, prefix="/app-backend-v1/profile", tags=["Profile"])
+app.include_router(tracking.router, prefix="/app-backend-v1/tracking", tags=["Tracking"])
