@@ -2,6 +2,49 @@
 
 Vision 2060 is a specialized AI-powered platform designed to streamline the job search and application lifecycle. It uses the Gemini 3 Flash model for advanced reasoning across various document formats and integrates with both Firebase (Firestore/Auth) and a custom tracking API (PostgreSQL) for resilient data persistence.
 
+```mermaid
+graph TD
+    A[User Input] -->|URL/Text/Image| B(Neural Extraction Interface)
+    B --> C{Structure Optimization}
+    C -->|Structured JSON| D[AI Fit Analysis Engine]
+    D -->|User Profile Comparison| E{Verdict & Gaps}
+    E --> F[Strategic Career Architect]
+    F -->|Tailored CV| G[Application Generator]
+    G -->|Emails/Cover Notes| H[Lifecycle Tracking]
+    H -->|Firestore/PostgreSQL| I[Job Command Center]
+    
+    subgraph "The Intelligence Core"
+    B
+    D
+    F
+    G
+    end
+```
+
+## 🛤 The Vision 2060 Journey: From Chaos to Career
+
+Navigating the modern job market is an exercise in friction. Vision 2060 was built to solve specific "Data Fatigue" and "Imposter Syndrome" pain points that stop high-potential candidates from reaching the interview.
+
+### Phase 1: The Frictionless Intake
+**The Pain:** You find a great job, but it's on a site with massive ads, cookie banners, and irrelevant sidebar text. Copying it manually results in a mess.
+**The Solution:** Paste the URL. Vision 2060's neural scraper strips the noise, while our multi-modal processing treats an image of a job board as if it were a direct API. We turn chaos into a clean, structured schema in seconds.
+
+### Phase 2: The Tactical "Go/No-Go"
+**The Pain:** Applying to everything is a recipe for burnout. You need to know *if* you're a fit before investing hours.
+**The Solution:** The system instantly cross-references your master profile against the job's hidden requirements. You get a "Verdict" (Relevant, Maybe, Skip) and a clear breakdown of your "Strengths" vs. your "Gaps." We don't just say you're a match; we explain the reasoning.
+
+### Phase 3: The Strategic Pivot (CV Tailoring)
+**The Pain:** Generic CVs get filtered by ATS. Tailoring a CV for every job is the most time-consuming part of the search.
+**The Solution:** Our **Strategic Career Architect** takes over. It doesn't just rewrite your CV; it re-engineers it. It identifies the company's pain points and positions your experience as the exact solution. Every bullet is optimized using the "X-Y-Z" impact formula.
+
+### Phase 4: Precision Communication
+**The Pain:** Writing cover letters that sound "professional" yet "authentic" is exhausting.
+**The Solution:** Choose your tone—Professional, Confident, or Concise. The system generates a cover note that uses verified facts from your profile. No hallucinations, no fluff—just a high-impact narrative that bridges your past to their future.
+
+### Phase 5: The Command Center
+**The Pain:** Once applied, jobs often vanish into the "Black Hole" of spreadsheets and bookmarks.
+**The Solution:** Every job enters your real-time dashboard. Track status changes (Interview, Offer, Follow-up) that sync across Firestore and PostgreSQL. Set reminders for follow-ups so you're never the candidate that got ghosted because of a lost email.
+
 ## 🚀 Implemented Capabilities
 
 ### 1. Neural Extraction Interface
@@ -79,6 +122,10 @@ A historical record of all system reasoning:
 
 ### Security Layer
 - **Identity**: Firebase Authentication with Google OAuth provider.
+- **Hardened Multi-Tenancy**: 
+    - **Data Isolation**: Enforced at the database level via complex Firestore Security Rules. Every document (`jobs`, `applications`, `cv_history`, `ai_logs`) is anchored to a `uid` field.
+    - **Request Validation**: Rules strictly forbid `list` operations without a `where("uid", "==", request.auth.uid)` constraint, preventing cross-user data leakage even in high-traffic environments.
+    - **Audit Integrity**: User-specific `chat_history` ensures that career strategy interactions remain private and contextual to the individual user.
 - **Authorization**: Custom `X-Firebase-Auth` header used for backend PostgreSQL calls to bypass proxy audience mismatches.
 - **Error Propagation**: Centralized `handleFirestoreError` system mapping database exceptions to `OperationType` for high-fidelity debugging (`create`, `update`, `delete`, `list`, `get`, `write`).
 - **Rules**: Production-ready `firestore.rules` enforcing UID-based ownership and schema validation for the `chat_history` and `applications` collections.
