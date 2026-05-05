@@ -76,6 +76,19 @@
         "timestamp": { "type": "string", "format": "date-time" }
       },
       "required": ["uid", "model", "action", "timestamp"]
+    },
+    "GeneratedCV": {
+      "title": "Tailored Professional Artifact",
+      "description": "Stores a CV specifically tailored to a single job opportunity.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "Owner UID" },
+        "job_id": { "type": "string", "description": "Associated job document ID" },
+        "markdown_content": { "type": "string", "description": "The CV content in markdown format" },
+        "tailored_to": { "type": "string", "description": "Summary of the target role and company" },
+        "generated_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "job_id", "markdown_content", "tailored_to"]
     }
   },
   "firestore": {
@@ -90,6 +103,10 @@
     "/applications/{appId}": {
       "schema": "Application",
       "description": "Generated application materials"
+    },
+    "/cv_history/{cvId}": {
+      "schema": "GeneratedCV",
+      "description": "History of tailored CV artifacts"
     },
     "/ai_logs/{logId}": {
       "schema": "AILog",

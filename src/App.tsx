@@ -8,12 +8,14 @@ import { motion, AnimatePresence } from 'motion/react';
 import { 
   Sparkles, 
   Search, 
+  PenTool,
   Send, 
   User, 
   CheckCircle2, 
   AlertCircle, 
   ChevronRight, 
-  ArrowLeft, 
+  ArrowLeft,
+  ArrowRight,
   Link as LinkIcon, 
   Type, 
   Image as ImageIcon,
@@ -52,10 +54,25 @@ import {
   Check,
   FileCheck,
   Database,
-  Eye
+  Eye,
+  Bell,
+  Terminal,
+  MessageSquare
 } from 'lucide-react';
 import { RawDataViewer } from './components/RawDataViewer';
+import { ChatHistoryView } from './components/ChatHistoryView';
+import { ExtractionAuditView } from './components/ExtractionAuditView';
+import { CVArtifactView } from './components/CVArtifactView';
+import { CVHistoryView } from './components/CVHistoryView';
+import { StandaloneCVBuilder } from './components/StandaloneCVBuilder';
 import ReactMarkdown from 'react-markdown';
+import { 
+  Sun, 
+  Moon,
+  Layout,
+  FileCode,
+  FileDown
+} from 'lucide-react';
 import { 
   BarChart, 
   Bar, 
@@ -79,6 +96,7 @@ import {
   JobAnalysis,
   JobStatus,
   GeneratedApplication,
+  GeneratedCV,
   ApplyRecommendation,
   Confidence
 } from './types';
@@ -99,6 +117,12 @@ import {
   bulkDeleteJobs,
   bulkUpdateJobStatus,
   bulkDeleteApplications,
+  saveChatHistory,
+  getChatHistory,
+  deleteChatHistory,
+  saveGeneratedCV,
+  getGeneratedCVs,
+  deleteGeneratedCV,
   db,
   handleFirestoreError,
   OperationType
@@ -107,7 +131,7 @@ import { onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
 import { collection, query, where, onSnapshot, orderBy, getDoc, doc, Timestamp } from 'firebase/firestore';
 import { aiService } from './services/aiService';
 
-const API_BASE = '/app-backend-v1';
+const API_BASE = '/backend-v2060';
 
 // Error Boundary Component
 class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean, error: any }> {
@@ -155,7 +179,8 @@ export default function App() {
 }
 
 function AppContent() {
-  const [step, setStep] = useState<'landing' | 'dashboard' | 'profile' | 'capture' | 'results' | 'inbox' | 'applications' | 'logs' | 'database' | 'tracking'>('landing');
+  const [step, setStep] = useState<'landing' | 'dashboard' | 'profile' | 'capture' | 'results' | 'inbox' | 'applications' | 'logs' | 'database' | 'tracking' | 'history' | 'archive' | 'cv_history' | 'cv_artifact' | 'cv_builder'>('landing');
+  const [theme, setTheme] = useState<'dark' | 'light'>('dark');
   const [loading, setLoading] = useState(false);
   const [loadingAnalysis, setLoadingAnalysis] = useState(false);
   const [loadingMessage, setLoadingMessage] = useState('');
@@ -211,16 +236,37 @@ function AppContent() {
   const [systemContent, setSystemContent] = useState<any>(null);
   const [appTone, setAppTone] = useState<Tone>(Tone.professional);
   const [appMode, setAppMode] = useState<OutputMode>(OutputMode.email);
+  const [activeGeneratedCV, setActiveGeneratedCV] = useState<GeneratedCV | null>(null);
+  const [loadingCV, setLoadingCV] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [returnStep, setReturnStep] = useState<string | null>(null);
+  const [viewingJobIdForArtifacts, setViewingJobIdForArtifacts] = useState<string | null>(null);
 
   // Firestore Data
   const [jobs, setJobs] = useState<ExtractedJob[]>([]);
   const [applications, setApplications] = useState<GeneratedApplication[]>([]);
   const [trackingRecords, setTrackingRecords] = useState<JobTrackingRecord[]>([]);
+  const [chatHistory, setChatHistory] = useState<any[]>([]);
+  const [cvHistory, setCvHistory] = useState<GeneratedCV[]>([]);
 
   const [selectedJobIds, setSelectedJobIds] = useState<string[]>([]);
   const [selectedAppIds, setSelectedAppIds] = useState<string[]>([]);
   const [inboxFilter, setInboxFilter] = useState<JobStatus | 'all'>('all');
+  const [selectedCV, setSelectedCV] = useState<GeneratedCV | null>(null);
+  const [rawJobText, setRawJobText] = useState('');
+
+  const handleUpdateJobStatus = async (jobId: string, status: JobStatus) => {
+    const job = jobs.find(j => j.id === jobId);
+    if (!job) return;
+    setLoading(true);
+    try {
+      await updateJobStatus(jobId, status, job.postgres_id);
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
     const unsub = onSnapshot(doc(db, 'system', 'stats'), (snap) => {
@@ -257,12 +303,12 @@ function AppContent() {
           features: [
             { 
               title: "Smart Capture", 
-              desc: "Neural extraction from any URL, text, or visual data stream.",
+              desc: "AI-powered extraction from any URL, text, or visual data stream.",
               icon: "Search",
               color: "blue"
             },
             { 
-              title: "Neural Fit", 
+              title: "AI Matching", 
               desc: "Advanced gap analysis against your unique professional profile.",
               icon: "Target",
               color: "orange"
@@ -281,6 +327,15 @@ function AppContent() {
     });
     return () => unsub();
   }, []);
+
+  // Theme Effect
+  useEffect(() => {
+    if (theme === 'light') {
+      document.documentElement.classList.add('light');
+    } else {
+      document.documentElement.classList.remove('light');
+    }
+  }, [theme]);
 
   // Auth Effect
   useEffect(() => {
@@ -315,7 +370,7 @@ function AppContent() {
     }
   }, [isAdmin, step]);
 
-  const getActivityData = () => {
+  const activityData = useMemo(() => {
     const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
     const data = [];
     const now = new Date();
@@ -342,18 +397,18 @@ function AppContent() {
       data.push({ name: dayName, apps: dayApps, captures: dayJobs });
     }
     return data;
-  };
+  }, [jobs, applications]);
 
-  const getTrend = (type: 'jobs' | 'apps') => {
+  const jobTrend = useMemo(() => {
     const now = new Date().getTime();
     const week = 7 * 24 * 60 * 60 * 1000;
     
-    const currentWeek = (type === 'jobs' ? jobs : applications).filter(item => {
+    const currentWeek = jobs.filter(item => {
       const ts = (item as any).captured_at?.seconds || (item as any).applied_at?.seconds;
       return ts && (ts * 1000) > (now - week);
     }).length;
     
-    const lastWeek = (type === 'jobs' ? jobs : applications).filter(item => {
+    const lastWeek = jobs.filter(item => {
       const ts = (item as any).captured_at?.seconds || (item as any).applied_at?.seconds;
       return ts && (ts * 1000) > (now - 2 * week) && (ts * 1000) <= (now - week);
     }).length;
@@ -361,7 +416,26 @@ function AppContent() {
     if (lastWeek === 0) return currentWeek > 0 ? `+${currentWeek}` : "0%";
     const diff = ((currentWeek - lastWeek) / lastWeek) * 100;
     return `${diff >= 0 ? '+' : ''}${Math.round(diff)}%`;
-  };
+  }, [jobs]);
+
+  const appTrend = useMemo(() => {
+    const now = new Date().getTime();
+    const week = 7 * 24 * 60 * 60 * 1000;
+    
+    const currentWeek = applications.filter(item => {
+      const ts = (item as any).captured_at?.seconds || (item as any).applied_at?.seconds;
+      return ts && (ts * 1000) > (now - week);
+    }).length;
+    
+    const lastWeek = applications.filter(item => {
+      const ts = (item as any).captured_at?.seconds || (item as any).applied_at?.seconds;
+      return ts && (ts * 1000) > (now - 2 * week) && (ts * 1000) <= (now - week);
+    }).length;
+    
+    if (lastWeek === 0) return currentWeek > 0 ? `+${currentWeek}` : "0%";
+    const diff = ((currentWeek - lastWeek) / lastWeek) * 100;
+    return `${diff >= 0 ? '+' : ''}${Math.round(diff)}%`;
+  }, [applications]);
 
   const handleSignIn = async () => {
     setAuthLoading(true);
@@ -411,9 +485,21 @@ function AppContent() {
       handleFirestoreError(error, OperationType.GET, 'applications');
     });
 
+    const cvQuery = query(
+      collection(db, 'cv_history'),
+      where('uid', '==', user.uid),
+      orderBy('generated_at', 'desc')
+    );
+    const unsubCV = onSnapshot(cvQuery, (snap) => {
+      setCvHistory(snap.docs.map(d => ({ id: d.id, ...d.data() } as GeneratedCV)));
+    }, (error) => {
+      handleFirestoreError(error, OperationType.GET, 'cv_history');
+    });
+
     return () => {
       unsubJobs();
       unsubApps();
+      unsubCV();
     };
   }, [user]);
 
@@ -427,6 +513,14 @@ function AppContent() {
       });
     }
   }, [user, step, jobs]);
+
+  // Chat History Sync
+  useEffect(() => {
+    if (user) {
+      const unsub = getChatHistory(user.uid, setChatHistory);
+      return () => unsub();
+    }
+  }, [user]);
 
   // Loading messages for AI tasks
   const loadingMessages = systemContent?.loading_messages || [
@@ -469,6 +563,29 @@ function AppContent() {
     return () => clearInterval(interval);
   }, [loading, loadingAnalysis, loadingMessages]);
 
+  const handleReRun = (item: any) => {
+    if (item.type === 'extraction') {
+      setCaptureInput({
+        type: item.metadata?.sourceType || SourceType.text,
+        value: item.prompt
+      });
+      setStep('capture');
+    } else if (item.type === 'analysis' || item.type === 'generation' || item.type === 'follow_up') {
+      const job = jobs.find(j => j.id === item.metadata?.jobId);
+      if (job) {
+        setExtractedJob(job);
+        if (item.type === 'analysis') {
+          handleAnalyze(job);
+        } else {
+          setAnalysis(job.analysis || null);
+          setStep('results');
+        }
+      } else {
+        setError("Original job data not found. Please re-capture the job.");
+      }
+    }
+  };
+
   // API Calls
   const handleExtract = async () => {
     if (!captureInput.value) {
@@ -505,11 +622,18 @@ function AppContent() {
       }
 
       // Use AI Service for extraction
-      const data = await aiService.extractJob(content, captureInput.type);
+      const result = await aiService.extractJob(content, captureInput.type);
+      const data = result.normalized_job;
+      
       if (captureInput.type === SourceType.link) {
         data.source_url = captureInput.value;
       }
       setExtractedJob(data);
+
+      // Save to History
+      if (user) {
+        saveChatHistory(user.uid, captureInput.value, result, 'extraction', { sourceType: captureInput.type });
+      }
 
       // Save to Firestore if logged in
       if (user) {
@@ -536,6 +660,12 @@ function AppContent() {
     setError(null);
     try {
       const data = await aiService.synthesizeProfile(profile.cv_text);
+      
+      // Save to History
+      if (user) {
+        saveChatHistory(user.uid, `Synthesize profile from CV (${profile.cv_text.length} chars)`, data, 'synthesis', { cvLength: profile.cv_text.length });
+      }
+
       setProfile(prev => ({
         ...prev,
         ...data,
@@ -556,7 +686,19 @@ function AppContent() {
     setLoading(true);
     try {
       await saveUserProfile(user.uid, profile);
-      setStep('capture');
+      
+      // Intelligent Navigation: Return to previous context if it exists
+      if (returnStep) {
+        // If we came from results, the extractedJob should still be in state
+        if (returnStep === 'results' && extractedJob) {
+          // Trigger a re-analysis automatically as profile has changed
+          handleAnalyze(extractedJob);
+        }
+        setStep(returnStep as any);
+        setReturnStep(null);
+      } else {
+        setStep('capture');
+      }
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -572,6 +714,18 @@ function AppContent() {
       const newStatus = generatedApp.subject?.startsWith('Follow-up:') ? JobStatus.follow_up : JobStatus.applied;
       await updateJobStatus(extractedJob.id || 'unknown', newStatus, extractedJob.postgres_id);
       setStep('applications');
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleBulkUpdateJobStatus = async (jobIds: string[], status: JobStatus) => {
+    setLoading(true);
+    try {
+      await bulkUpdateJobStatus(jobIds, status);
+      setSelectedJobIds([]);
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -656,6 +810,11 @@ function AppContent() {
       const data = await aiService.analyzeJob(job, profile);
       console.log("[AI Fit Match] Analysis data received:", data);
       setAnalysis(data);
+
+      // Save to History
+      if (user) {
+        saveChatHistory(user.uid, `Analyze fit for ${job.title} at ${job.company}`, data, 'analysis', { jobId: job.id, jobTitle: job.title });
+      }
       if (job.id) {
         await updateJob(job.id, {
           analysis: data,
@@ -686,6 +845,11 @@ function AppContent() {
         appTone
       );
       setGeneratedApp(data);
+
+      // Save to History
+      if (user) {
+        saveChatHistory(user.uid, `Generate ${appMode} for ${extractedJob.title} (${appTone} tone)`, data, 'generation', { jobId: extractedJob.id, jobTitle: extractedJob.title, mode: appMode, tone: appTone });
+      }
       if (extractedJob?.id) {
         await updateJobStatus(extractedJob.id, JobStatus.apply_now, extractedJob.postgres_id);
       }
@@ -696,10 +860,60 @@ function AppContent() {
     }
   };
 
+  const handleGenerateCV = async (jobOverride?: ExtractedJob) => {
+    const job = jobOverride || extractedJob;
+    if (!job || !profile || !user) return;
+    
+    // Gap Analysis: Ensure base profile exists
+    if (!profile.cv_text || profile.cv_text.length < 50) {
+      setError("Incomplete profile. Please add your professional background in the Profile section before tailoring a CV.");
+      return;
+    }
+
+    setLoadingCV(true);
+    try {
+      const cvResult = await aiService.generateTailoredCV(job, profile);
+      const cvData = {
+        job_id: job.id || 'direct_build',
+        markdown_content: cvResult.markdown_content,
+        tailored_to: `${job.title} at ${job.company}`
+      };
+      
+      const id = await saveGeneratedCV(user.uid, cvData);
+      const completeCV: GeneratedCV = {
+        ...cvData,
+        id,
+        uid: user.uid,
+        generated_at: new Date()
+      };
+      setActiveGeneratedCV(completeCV);
+      setViewingJobIdForArtifacts(null);
+    } catch (err: any) {
+      console.error("CV Generation Fail:", err);
+      setError("Failed to generate tailored CV artifact.");
+    } finally {
+      setLoadingCV(false);
+    }
+  };
+
+  const handleDeleteCV = async (id: string) => {
+    try {
+      await deleteGeneratedCV(id);
+      if (activeGeneratedCV?.id === id) setActiveGeneratedCV(null);
+    } catch (err: any) {
+      setError(err.message);
+    }
+  }
+
   const handleFollowUp = async (job: ExtractedJob, app: GeneratedApplication) => {
     setLoading(true);
     try {
       const data = await aiService.generateFollowUp(job, profile, app);
+      
+      // Save to History
+      if (user) {
+        saveChatHistory(user.uid, `Generate follow-up for ${job.title}`, data, 'follow_up', { jobId: job.id, jobTitle: job.title });
+      }
       
       // Create a temporary "application" object to show in results
       const followUpApp: GeneratedApplication = {
@@ -736,592 +950,223 @@ function AppContent() {
     </span>
   );
 
-  return (
-    <div className="relative min-h-screen overflow-x-hidden futuristic-scroll">
-      <div className="scanline" />
-      
-      {/* Header */}
-      <header className="sticky top-0 z-40 w-full glass-card !rounded-none border-x-0 border-t-0 px-6 py-4 flex items-center justify-between">
-        <div className="flex items-center gap-3 cursor-pointer" onClick={() => setStep(user ? 'dashboard' : 'landing')}>
-          <div className="w-10 h-10 rounded-lg bg-neon-blue/20 border border-neon-blue/50 flex items-center justify-center neon-glow-blue">
-            <Cpu className="text-neon-blue w-6 h-6" />
-          </div>
-          <div className="hidden sm:block">
-            <h1 className="font-bold tracking-tighter text-xl leading-none">VISION <span className="text-neon-blue">2060</span></h1>
-            <p className="text-[10px] text-white/40 uppercase tracking-[0.2em]">Job Acquisition Engine</p>
-          </div>
-        </div>
-
-        {/* Navigation */}
-        <nav className="hidden md:flex items-center gap-1 bg-white/5 p-1 rounded-xl border border-white/10">
-          {[
-            { id: 'dashboard', label: 'Command', icon: <LayoutDashboard size={14} />, auth: true },
-            ...(isAdmin ? [{ id: 'logs', label: 'Neural Logs', icon: <Activity size={14} />, auth: true }] : []),
-            { id: 'capture', label: 'Capture', icon: <Search size={14} /> },
-            { id: 'inbox', label: 'Inbox', icon: <Inbox size={14} />, count: jobs.length, auth: true },
-            { id: 'database', label: 'Database', icon: <Database size={14} />, auth: true },
-            { id: 'applications', label: 'History', icon: <History size={14} />, count: applications.length, auth: true },
-            { id: 'profile', label: 'Profile', icon: <User size={14} /> },
-          ].filter(item => !item.auth || user).map((item) => (
-            <button
-              key={item.id}
-              onClick={() => setStep(item.id as any)}
-              className={cn(
-                "relative flex items-center gap-2 px-4 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all",
-                step === item.id 
-                  ? "bg-neon-blue/20 text-neon-blue border border-neon-blue/30 shadow-[0_0_10px_rgba(0,243,255,0.1)]" 
-                  : "text-white/40 hover:text-white/60 hover:bg-white/5"
-              )}
-            >
-              {item.icon} {item.label}
-              {item.count !== undefined && item.count > 0 && (
-                <span className="ml-1 px-1.5 py-0.5 rounded-full bg-neon-blue text-black text-[8px] font-black leading-none">
-                  {item.count}
-                </span>
-              )}
-              {step === item.id && (
-                <motion.div 
-                  layoutId="activeNav"
-                  className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-1/2 h-0.5 bg-neon-blue shadow-[0_0_5px_rgba(0,243,255,0.8)]"
-                />
-              )}
-            </button>
-          ))}
-        </nav>
-        
-        <div className="flex items-center gap-4">
-          <div className="hidden lg:flex items-center gap-2">
-            <div className={`w-2 h-2 rounded-full ${user ? 'bg-green-500' : 'bg-orange-500'} animate-pulse`} />
-            <span className="text-[10px] font-mono text-white/40 uppercase tracking-widest">
-              {user ? 'Neural Link Active' : 'Offline Mode'}
-            </span>
-          </div>
-          <div className="h-6 w-px bg-white/10 hidden lg:block" />
-          
-          <button 
-            className="md:hidden p-2 rounded-lg hover:bg-white/5 text-white/60"
-            onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-          >
-            {isMobileMenuOpen ? <X size={20} /> : <Menu size={20} />}
-          </button>
-
-          {user ? (
-            <div className="flex items-center gap-3">
-              <div className="hidden sm:flex flex-col items-end">
-                <span className="text-[10px] font-bold text-white/90 leading-none">{user.displayName}</span>
-                <span className="text-[8px] text-white/40 uppercase tracking-widest">Authorized User</span>
-              </div>
-              <button 
-                onClick={() => signOut()}
-                className="p-2 rounded-lg hover:bg-red-500/10 text-white/40 hover:text-red-400 transition-all"
-                title="Sign Out"
-              >
-                <LogOut size={20} />
-              </button>
-            </div>
-          ) : (
-            <button 
-              onClick={handleSignIn}
-              disabled={authLoading}
-              className={cn(
-                "flex items-center gap-2 px-4 py-2 rounded-lg bg-neon-blue/10 border border-neon-blue/30 text-neon-blue text-[10px] font-bold uppercase tracking-widest hover:bg-neon-blue/20 transition-all",
-                authLoading && "opacity-50 cursor-wait"
-              )}
-            >
-              <LogIn size={16} /> {authLoading ? 'Connecting...' : 'Connect'}
-            </button>
-          )}
-        </div>
-      </header>
-
-      {/* Mobile Menu Overlay */}
-      <AnimatePresence>
-        {isMobileMenuOpen && (
-          <motion.div
-            initial={{ opacity: 0, y: -20 }}
+  const renderAppView = () => {
+    switch (step) {
+      case 'dashboard':
+        return (
+          <motion.div 
+            key="dashboard"
+            initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -20 }}
-            className="fixed inset-x-0 top-[73px] z-30 md:hidden glass-card !rounded-none border-x-0 border-t-0 p-6 space-y-4 shadow-2xl"
+            exit={{ opacity: 0, y: -10 }}
+            className="space-y-8"
           >
-    {[
-      { id: 'dashboard', label: 'Command', icon: <LayoutDashboard size={18} />, auth: true },
-      ...(isAdmin ? [{ id: 'logs', label: 'Neural Logs', icon: <Activity size={18} />, auth: true }] : []),
-      { id: 'profile', label: 'Profile', icon: <User size={18} /> },
-      { id: 'capture', label: 'Capture Job', icon: <Search size={18} /> },
-      { id: 'inbox', label: 'Inbox', icon: <Inbox size={18} />, count: jobs.length, auth: true },
-      { id: 'database', label: 'Database', icon: <Database size={18} />, auth: true },
-      { id: 'applications', label: 'History', icon: <History size={18} />, count: applications.length, auth: true },
-    ].filter(item => !item.auth || user).map((item) => (
-      <button
-        key={item.id}
-        onClick={() => {
-          setStep(item.id as any);
-          setIsMobileMenuOpen(false);
-        }}
-        className={cn(
-          "w-full flex items-center gap-4 p-4 rounded-xl text-xs font-bold uppercase tracking-widest transition-all",
-          step === item.id 
-            ? "bg-neon-blue/20 text-neon-blue border border-neon-blue/30" 
-            : "text-white/40 hover:text-white/60 hover:bg-white/5"
-        )}
-      >
-        {item.icon} {item.label}
-        {item.count !== undefined && item.count > 0 && (
-          <span className="ml-auto px-2 py-0.5 rounded-full bg-neon-blue text-black text-[10px] font-black">
-            {item.count}
-          </span>
-        )}
-      </button>
-    ))}
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      <main className="max-w-6xl mx-auto px-6 py-12">
-        <AnimatePresence mode="wait">
-          
-          {/* LANDING STEP */}
-          {step === 'landing' && (
-            <motion.div 
-              key="landing"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="relative flex flex-col items-center text-center space-y-16 py-20"
-            >
-              {/* Background Glows */}
-              <div className="absolute -top-40 left-1/2 -translate-x-1/2 w-[800px] h-[800px] bg-neon-blue/5 rounded-full blur-[120px] pointer-events-none" />
-              <div className="absolute top-20 -left-20 w-64 h-64 bg-neon-purple/5 rounded-full blur-[80px] pointer-events-none" />
-              <div className="absolute bottom-20 -right-20 w-64 h-64 bg-neon-orange/5 rounded-full blur-[80px] pointer-events-none" />
-
-              <div className="space-y-6 relative z-10">
-                <motion.div 
-                  initial={{ y: 20, opacity: 0 }}
-                  animate={{ y: 0, opacity: 1 }}
-                  transition={{ delay: 0.1 }}
-                  className="inline-flex items-center gap-3 px-6 py-2 rounded-full bg-white/5 border border-white/10 text-white/60 text-[10px] font-black uppercase tracking-[0.4em] backdrop-blur-sm"
-                >
-                  <div className="w-1.5 h-1.5 rounded-full bg-neon-blue animate-pulse" />
-                  Neural Link Protocol v2.0.60
-                </motion.div>
-                
-                <h2 className="text-7xl md:text-9xl font-black tracking-tighter leading-[0.85] uppercase">
-                  EVOLVE YOUR <br />
-                  <span className="text-transparent bg-clip-text bg-gradient-to-r from-neon-blue via-neon-purple to-neon-orange animate-gradient-x">CAREER</span>
-                </h2>
-                
-                <p className="max-w-2xl mx-auto text-white/40 text-lg md:text-xl font-medium leading-relaxed">
-                  The ultimate neural-link between your potential and the global job market. 
-                  Capture, analyze, and generate professional applications in seconds.
-                </p>
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div>
+                <h2 className="text-3xl font-black tracking-tight uppercase">COMMAND <span className="text-neon-blue">CENTER</span></h2>
+                <p className="text-white/40 text-sm italic">Authenticated secure node processing {jobs.length} operations.</p>
               </div>
-
-              <div className="flex flex-col sm:flex-row items-center justify-center gap-8 relative z-10">
-                <NeonButton 
-                  variant="blue" 
-                  className="px-16 py-6 text-xl rounded-2xl shadow-[0_0_30px_rgba(0,243,255,0.2)] hover:shadow-[0_0_50px_rgba(0,243,255,0.4)] transition-all"
-                  onClick={() => user ? setStep('dashboard') : handleSignIn()}
-                  isLoading={authLoading}
-                >
-                  {user ? 'Enter Command Center' : (authLoading ? 'Connecting...' : 'Initialize Neural Link')} <ChevronRight size={24} className="ml-2" />
+              <div className="flex gap-3">
+                <NeonButton variant="blue" onClick={() => setStep('capture')}>
+                  <Plus size={18} className="mr-2" /> New Capture
                 </NeonButton>
-                
-                <div className="flex flex-col items-start text-left">
-                  <span className="text-[10px] font-black text-white/20 uppercase tracking-widest mb-1">System Status</span>
-                  <div className="flex items-center gap-2">
-                    <div className="flex gap-1">
-                      {[1, 2, 3].map(i => <div key={i} className="w-1 h-3 bg-neon-blue/40 rounded-full" />)}
-                    </div>
-                    <span className="text-xs font-mono text-neon-blue uppercase tracking-widest">All Nodes Operational</span>
-                  </div>
-                </div>
               </div>
+            </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-8 w-full max-w-5xl relative z-10">
-                {(systemContent?.features || []).map((feature: any, i: number) => (
-                  <GlassCard key={i} className="group flex flex-col items-center text-center p-10 space-y-6 hover:bg-white/5 transition-all duration-500 border-white/5 hover:border-white/20">
-                    <div className={`w-16 h-16 rounded-2xl bg-white/5 flex items-center justify-center group-hover:scale-110 group-hover:rotate-3 transition-transform duration-500`}>
-                      {feature.icon === 'Search' ? <Search className="text-neon-blue" /> : 
-                       feature.icon === 'Target' ? <Target className="text-neon-orange" /> : 
-                       <Zap className="text-neon-purple" />}
-                    </div>
-                    <div className="space-y-2">
-                      <h3 className="font-black text-2xl uppercase tracking-tight group-hover:text-neon-blue transition-colors">{feature.title}</h3>
-                      <p className="text-sm text-white/40 leading-relaxed">{feature.desc}</p>
-                    </div>
-                    <div className="w-8 h-1 bg-white/5 rounded-full group-hover:w-16 group-hover:bg-neon-blue transition-all duration-500" />
-                  </GlassCard>
-                ))}
-              </div>
-
-              {/* Neural Ticker */}
-              <div className="w-full border-y border-white/5 py-4 overflow-hidden relative z-10">
-                <div className="flex whitespace-nowrap animate-marquee gap-12">
-                  {[...Array(10)].map((_, i) => (
-                    <div key={i} className="flex items-center gap-4 text-[10px] font-mono text-white/20 uppercase tracking-[0.3em]">
-                      <span className="text-neon-blue">●</span> SYNCING_NEURAL_NODES
-                      <span className="text-neon-purple">●</span> ANALYZING_MARKET_TRENDS
-                      <span className="text-neon-orange">●</span> OPTIMIZING_CAREER_PATHS
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Stats Section */}
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-8 w-full max-w-4xl relative z-10 pt-8">
-                {[
-                  { label: "Neural Nodes", value: systemStats?.nodes || "..." },
-                  { label: "Jobs Synthesized", value: systemStats?.jobs || "..." },
-                  { label: "Success Rate", value: systemStats?.success || "..." },
-                  { label: "Latency", value: systemStats?.latency || "..." }
-                ].map((stat, i) => (
-                  <div key={i} className="text-center space-y-1">
-                    <p className="text-[10px] font-black text-white/20 uppercase tracking-widest">{stat.label}</p>
-                    <p className="text-2xl font-black tracking-tighter text-white/80">{stat.value}</p>
-                  </div>
-                ))}
-              </div>
-            </motion.div>
-          )}
-
-          {/* DASHBOARD (COMMAND CENTER) STEP */}
-          {step === 'dashboard' && (
-            <motion.div 
-              key="dashboard"
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -20 }}
-              className="space-y-8"
-            >
-              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                <div>
-                  <h2 className="text-3xl font-black tracking-tight uppercase">COMMAND <span className="text-neon-blue">CENTER</span></h2>
-                  <p className="text-white/40 text-sm">Welcome back, {user?.displayName?.split(' ')[0]}. System status: <span className="text-green-400">Optimal</span></p>
-                </div>
-                <div className="flex gap-3">
-                  <NeonButton variant="blue" onClick={() => setStep('capture')}>
-                    <Plus size={18} className="mr-2" /> New Capture
-                  </NeonButton>
-                  <button 
-                    onClick={() => setStep('profile')}
-                    className="p-2 rounded-lg border border-white/10 hover:bg-white/5 text-white/40"
-                  >
-                    <Settings size={20} />
-                  </button>
-                </div>
-              </div>
-
-              {/* Metrics Grid */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-                {[
-                  { label: "Total Captured", value: jobs.length, icon: <Inbox className="text-neon-blue" />, trend: getTrend('jobs'), color: "blue", action: () => setStep('inbox') },
-                  { label: "Applications Sent", value: applications.length, icon: <Send className="text-neon-purple" />, trend: getTrend('apps'), color: "purple", action: () => setStep('applications') },
-                  { label: "Follow-ups Needed", value: jobs.filter(j => j.status === JobStatus.follow_up).length, icon: <Mail className="text-neon-orange" />, trend: "Active", color: "orange", action: () => { setInboxFilter(JobStatus.follow_up); setStep('inbox'); } },
-                  { label: "Profile Strength", value: `${Math.min(100, Math.round((profile.cv_text.length / 500) * 100))}%`, icon: <User className="text-neon-blue" />, trend: profile.cv_text.length >= 500 ? "Complete" : "Improve", color: "blue", action: () => setStep('profile') }
-                ].map((metric, i) => (
-                  <GlassCard 
-                    key={i} 
-                    className="p-6 space-y-4 cursor-pointer hover:border-white/20 hover:bg-white/5 transition-all group"
-                    onClick={metric.action}
-                  >
-                    <div className="flex items-center justify-between">
-                      <div className="w-10 h-10 rounded-lg bg-white/5 flex items-center justify-center group-hover:bg-white/10 transition-colors">
-                        {metric.icon}
-                      </div>
-                      <span className="text-[10px] font-mono text-green-400">{metric.trend}</span>
-                    </div>
-                    <div>
-                      <p className="text-[10px] uppercase font-bold tracking-widest text-white/40 group-hover:text-white/60 transition-colors">{metric.label}</p>
-                      <h3 className="text-3xl font-black tracking-tighter group-hover:text-neon-blue transition-colors">{metric.value}</h3>
-                    </div>
-                  </GlassCard>
-                ))}
-              </div>
-
-              <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-                {/* Activity Chart */}
-                <GlassCard className="lg:col-span-8 p-8 space-y-6">
+            {/* Metrics Grid */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+              {[
+                { label: "Total Captured", value: jobs.length, icon: <Inbox className="text-neon-blue" />, trend: jobTrend, color: "blue", action: () => setStep('inbox') },
+                { label: "Compiled Artifacts", value: cvHistory.length, icon: <Cpu className="text-neon-purple" />, trend: "Compiler Results", color: "purple", action: () => setStep('cv_history') },
+                { label: "Follow-ups Needed", value: jobs.filter(j => j.status === JobStatus.follow_up).length, icon: <Mail className="text-neon-orange" />, trend: "Active", color: "orange", action: () => { setInboxFilter(JobStatus.follow_up); setStep('inbox'); } },
+                { label: "Profile Status", value: `${Math.min(100, Math.round((profile.cv_text.length / 500) * 100))}%`, icon: <User className="text-neon-blue" />, trend: profile.cv_text.length >= 500 ? "Sync Complete" : "Profile Incomplete", color: "blue", action: () => setStep('profile') }
+              ].map((metric, i) => (
+                <GlassCard 
+                  key={i} 
+                  className="p-6 space-y-4 cursor-pointer hover:border-white/20 hover:bg-white/5 transition-all group border-white/5"
+                  onClick={metric.action}
+                >
                   <div className="flex items-center justify-between">
-                    <h3 className="text-lg font-bold tracking-tight flex items-center gap-2">
-                      <TrendingUp size={18} className="text-neon-blue" /> ACTIVITY TRENDS
-                    </h3>
-                    <div className="flex gap-2">
-                      {['7D', '30D', 'ALL'].map(t => (
-                        <button key={t} className="px-2 py-1 rounded bg-white/5 text-[10px] font-bold text-white/40 hover:text-white transition-colors">{t}</button>
-                      ))}
+                    <div className="w-10 h-10 rounded-lg bg-white/5 flex items-center justify-center group-hover:bg-white/10 transition-colors">
+                      {metric.icon}
                     </div>
+                    <span className="text-[10px] font-mono text-green-400/70">{metric.trend}</span>
                   </div>
-                  <div className="h-[300px] w-full">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <AreaChart data={getActivityData()}>
-                        <defs>
-                          <linearGradient id="colorApps" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor="#00f2ff" stopOpacity={0.3}/>
-                            <stop offset="95%" stopColor="#00f2ff" stopOpacity={0}/>
-                          </linearGradient>
-                        </defs>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#ffffff05" vertical={false} />
-                        <XAxis 
-                          dataKey="name" 
-                          stroke="#ffffff20" 
-                          fontSize={10} 
-                          tickLine={false} 
-                          axisLine={false}
-                        />
-                        <YAxis 
-                          stroke="#ffffff20" 
-                          fontSize={10} 
-                          tickLine={false} 
-                          axisLine={false}
-                        />
-                        <Tooltip 
-                          contentStyle={{ backgroundColor: '#0a0a0a', border: '1px solid #ffffff10', borderRadius: '8px', fontSize: '10px' }}
-                          itemStyle={{ color: '#00f2ff' }}
-                        />
-                        <Area 
-                          type="monotone" 
-                          dataKey="captures" 
-                          stroke="#00f2ff" 
-                          fillOpacity={1} 
-                          fill="url(#colorApps)" 
-                          strokeWidth={2}
-                        />
-                      </AreaChart>
-                    </ResponsiveContainer>
+                  <div>
+                    <p className="text-[9px] uppercase font-bold tracking-widest text-white/30 group-hover:text-white/60 transition-colors">{metric.label}</p>
+                    <h3 className="text-3xl font-black tracking-tighter group-hover:text-neon-blue transition-colors">{metric.value}</h3>
+                  </div>
+                </GlassCard>
+              ))}
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+              {/* Activity Chart */}
+              <GlassCard className="lg:col-span-8 p-8 space-y-6 border-white/5 hover:border-white/10 transition-colors">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-black tracking-[0.2em] uppercase text-white/40 flex items-center gap-2">
+                    <TrendingUp size={16} className="text-neon-blue" /> ARCHIVE PERFORMANCE
+                  </h3>
+                </div>
+                <div className="h-[300px] w-full">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart data={activityData}>
+                      <defs>
+                        <linearGradient id="colorApps" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#00f2ff" stopOpacity={0.2}/>
+                          <stop offset="95%" stopColor="#00f2ff" stopOpacity={0}/>
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#ffffff05" vertical={false} />
+                      <XAxis dataKey="name" stroke="#ffffff10" fontSize={10} tickLine={false} axisLine={false} />
+                      <YAxis stroke="#ffffff10" fontSize={10} tickLine={false} axisLine={false} />
+                      <Tooltip 
+                        contentStyle={{ backgroundColor: '#0a0a0a', border: '1px solid #ffffff05', borderRadius: '12px', fontSize: '10px' }}
+                        itemStyle={{ color: '#00f2ff' }}
+                      />
+                      <Area type="monotone" dataKey="captures" stroke="#00f2ff" fillOpacity={1} fill="url(#colorApps)" strokeWidth={2} />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                </div>
+              </GlassCard>
+
+              {/* Quick Actions & Recent */}
+              <div className="lg:col-span-4 space-y-6">
+                <GlassCard className="p-6 space-y-6 border-white/5">
+                  <h3 className="text-[9px] font-black uppercase tracking-[0.2em] text-white/30">Immediate Logistics</h3>
+                  <div className="space-y-3">
+                    <button 
+                      onClick={() => setStep('capture')}
+                      className="w-full flex items-center justify-between p-4 rounded-xl bg-white/5 border border-white/5 hover:border-neon-blue/30 hover:bg-neon-blue/5 transition-all group"
+                    >
+                      <div className="flex items-center gap-3">
+                        <Zap size={18} className="text-neon-blue" />
+                        <span className="text-[10px] font-black uppercase tracking-widest text-white/60">Capture Link</span>
+                      </div>
+                      <ArrowUpRight size={14} className="text-white/10 group-hover:text-neon-blue" />
+                    </button>
+                    <button 
+                      onClick={() => setStep('cv_builder')}
+                      className="w-full flex items-center justify-between p-4 rounded-xl bg-white/5 border border-white/5 hover:border-neon-teal/30 hover:bg-neon-teal/5 transition-all group"
+                    >
+                      <div className="flex items-center gap-3">
+                        <PenTool size={18} className="text-neon-blue" />
+                        <span className="text-[10px] font-black uppercase tracking-widest text-white/60">Standalone Builder</span>
+                      </div>
+                      <ArrowUpRight size={14} className="text-white/10 group-hover:text-neon-blue" />
+                    </button>
+                    <button 
+                      onClick={() => setStep('profile')}
+                      className="w-full flex items-center justify-between p-4 rounded-xl bg-white/5 border border-white/5 hover:border-neon-purple/30 hover:bg-neon-purple/5 transition-all group"
+                    >
+                      <div className="flex items-center gap-3">
+                        <User size={18} className="text-neon-purple" />
+                        <span className="text-[10px] font-black uppercase tracking-widest text-white/60">Verify Identity</span>
+                      </div>
+                      <ArrowUpRight size={14} className="text-white/10 group-hover:text-neon-purple" />
+                    </button>
                   </div>
                 </GlassCard>
 
-                {/* Quick Actions & Recent */}
-                <div className="lg:col-span-4 space-y-8">
-                  <GlassCard className="p-6 space-y-6">
-                    <h3 className="text-sm font-bold uppercase tracking-widest text-white/40">Quick Actions</h3>
-                    <div className="space-y-3">
-                      <button 
-                        onClick={() => setStep('capture')}
-                        className="w-full flex items-center justify-between p-4 rounded-xl bg-white/5 border border-white/5 hover:border-neon-blue/30 hover:bg-neon-blue/5 transition-all group"
+                <GlassCard className="p-6 space-y-6 border-white/5">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-[9px] font-black uppercase tracking-[0.2em] text-white/30">Latest Syncs</h3>
+                    <button onClick={() => setStep('inbox')} className="text-[9px] font-black text-neon-blue uppercase tracking-widest">Show All</button>
+                  </div>
+                  <div className="space-y-4">
+                    {jobs.slice(0, 3).map(job => (
+                      <div 
+                        key={job.id} 
+                        className="p-3 rounded-xl bg-white/5 border border-white/5 flex items-center gap-3 group cursor-pointer hover:border-white/20 transition-all" 
+                        onClick={() => { setExtractedJob(job); setStep('results'); }}
                       >
-                        <div className="flex items-center gap-3">
-                          <Zap size={18} className="text-neon-blue" />
-                          <span className="text-xs font-bold uppercase tracking-widest">Capture Job</span>
+                        <div className="w-8 h-8 rounded-lg bg-white/5 flex items-center justify-center text-white/20 group-hover:text-neon-blue transition-colors shrink-0">
+                          <Briefcase size={14} />
                         </div>
-                        <ArrowUpRight size={14} className="text-white/20 group-hover:text-neon-blue" />
-                      </button>
-                      <button 
-                        onClick={() => setStep('profile')}
-                        className="w-full flex items-center justify-between p-4 rounded-xl bg-white/5 border border-white/5 hover:border-neon-purple/30 hover:bg-neon-purple/5 transition-all group"
-                      >
-                        <div className="flex items-center gap-3">
-                          <User size={18} className="text-neon-purple" />
-                          <span className="text-xs font-bold uppercase tracking-widest">Update Profile</span>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-[11px] font-bold truncate transition-colors uppercase tracking-tight">{job.title}</p>
+                          <p className="text-[9px] text-white/30 uppercase tracking-[0.1em] truncate italic">{job.company}</p>
                         </div>
-                        <ArrowUpRight size={14} className="text-white/20 group-hover:text-neon-purple" />
-                      </button>
-                    </div>
-                  </GlassCard>
-
-                  <GlassCard className="p-6 space-y-6">
-                    <div className="flex items-center justify-between">
-                      <h3 className="text-sm font-bold uppercase tracking-widest text-white/40">Recent Jobs</h3>
-                      <button onClick={() => setStep('inbox')} className="text-[10px] font-bold text-neon-blue uppercase tracking-widest">View All</button>
-                    </div>
-                    <div className="space-y-4">
-                      {jobs.slice(0, 3).map(job => (
-                        <div key={job.id} className="flex items-center gap-3 group cursor-pointer" onClick={() => { setExtractedJob(job); setStep('results'); }}>
-                          <div className="w-10 h-10 rounded bg-white/5 flex items-center justify-center text-white/20 group-hover:text-neon-blue transition-colors">
-                            <Briefcase size={16} />
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <p className="text-xs font-bold truncate group-hover:text-neon-blue transition-colors">{job.title}</p>
-                            <p className="text-[10px] text-white/40 uppercase tracking-widest truncate">{job.company}</p>
-                          </div>
-                        </div>
-                      ))}
-                      {jobs.length === 0 && <p className="text-xs text-white/20 italic">No jobs captured yet.</p>}
-                    </div>
-                  </GlassCard>
-                </div>
-              </div>
-            </motion.div>
-          )}
-
-          {/* PROFILE STEP */}
-          {step === 'profile' && (
-            <motion.div 
-              key="profile"
-              initial={{ opacity: 0, x: 20 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -20 }}
-              className="max-w-3xl mx-auto space-y-8"
-            >
-              <div className="flex items-center justify-between">
-                <div>
-                  <h2 className="text-3xl font-bold tracking-tight">USER <span className="text-neon-blue">PROFILE</span></h2>
-                  <p className="text-white/40 text-sm">Configure your professional identity for precise AI matching.</p>
-                </div>
-                <NeonButton variant="blue" onClick={handleSaveProfile} isLoading={loading}>
-                  Save & Continue <ChevronRight size={18} />
-                </NeonButton>
-              </div>
-
-              <GlassCard className="space-y-6">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div className="space-y-2">
-                    <label className="text-[10px] uppercase tracking-widest text-white/40 font-bold">Full Name</label>
-                    <FuturisticInput 
-                      placeholder="e.g. Alex Quantum" 
-                      value={profile.full_name}
-                      onChange={e => setProfile({...profile, full_name: e.target.value})}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-[10px] uppercase tracking-widest text-white/40 font-bold">Email Address</label>
-                    <FuturisticInput 
-                      placeholder="alex@future.net" 
-                      value={profile.email}
-                      onChange={e => setProfile({...profile, email: e.target.value})}
-                    />
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div className="space-y-2">
-                    <label className="text-[10px] uppercase tracking-widest text-white/40 font-bold">LinkedIn URL</label>
-                    <FuturisticInput 
-                      placeholder="https://linkedin.com/in/..." 
-                      value={profile.linkedin_url || ''}
-                      onChange={e => setProfile({...profile, linkedin_url: e.target.value})}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-[10px] uppercase tracking-widest text-white/40 font-bold">Portfolio URL</label>
-                    <FuturisticInput 
-                      placeholder="https://alex.dev" 
-                      value={profile.portfolio_url || ''}
-                      onChange={e => setProfile({...profile, portfolio_url: e.target.value})}
-                    />
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-[10px] uppercase tracking-widest text-white/40 font-bold">Experience Summary</label>
-                  <FuturisticTextarea 
-                    placeholder="Briefly describe your career trajectory..." 
-                    value={profile.experience_summary}
-                    onChange={e => setProfile({...profile, experience_summary: e.target.value})}
-                  />
-                </div>
-
-                <div className="space-y-4">
-                  <label className="text-[10px] uppercase tracking-widest text-white/40 font-bold">Core Skills</label>
-                  <div className="flex gap-2">
-                    <FuturisticInput 
-                      placeholder="Add a skill (e.g. React, Python, UI Design)" 
-                      value={newSkill}
-                      onChange={e => setNewSkill(e.target.value)}
-                      onKeyDown={e => e.key === 'Enter' && addSkill()}
-                    />
-                    <NeonButton variant="blue" className="!px-3" onClick={addSkill}>
-                      <Plus size={20} />
-                    </NeonButton>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    {(profile.skills || []).map(skill => (
-                      <span key={skill} className="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-neon-blue/10 border border-neon-blue/30 text-neon-blue text-xs">
-                        {skill}
-                        <button onClick={() => removeSkill(skill)} className="hover:text-white transition-colors">
-                          <X size={12} />
-                        </button>
-                      </span>
+                      </div>
                     ))}
                   </div>
-                </div>
+                </GlassCard>
+              </div>
+            </div>
+          </motion.div>
+        );
+      case 'capture':
+        return (
+          <motion.div 
+            key="capture"
+            initial={{ opacity: 0, x: -10 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: 10 }}
+            className="max-w-2xl mx-auto space-y-8 pt-12"
+          >
+            <div className="text-center space-y-2">
+              <h2 className="text-4xl font-black tracking-tighter uppercase leading-none italic">JOB <br/><span className="text-neon-blue">CAPTURE</span></h2>
+              <p className="text-white/40 text-[10px] uppercase tracking-widest font-bold">Paste job details or a link to save it to your database.</p>
+            </div>
 
-                <div className="space-y-2">
-                  <div className="flex justify-between items-center">
-                    <label className="text-[10px] uppercase tracking-widest text-white/40 font-bold">CV / Resume Text</label>
-                    <button 
-                      onClick={handleSynthesizeProfile}
-                      disabled={loading || profile.cv_text.length < 50}
-                      className="text-[10px] font-bold text-neon-blue uppercase tracking-widest hover:text-white transition-colors disabled:opacity-30 disabled:cursor-not-allowed flex items-center gap-1"
-                    >
-                      <Sparkles size={12} /> Synthesize from CV
-                    </button>
-                  </div>
-                  <FuturisticTextarea 
-                    placeholder="Paste your full CV content here for deep analysis..." 
-                    className="min-h-[250px]"
-                    value={profile.cv_text}
-                    onChange={e => setProfile({...profile, cv_text: e.target.value})}
-                  />
-                  <div className="flex justify-between items-center">
-                    <div className="flex flex-col gap-1">
-                      <p className={`text-[10px] ${profile.cv_text.length >= 500 ? 'text-green-400' : profile.cv_text.length >= 200 ? 'text-neon-blue' : 'text-white/30'}`}>
-                        Profile Strength: {Math.min(100, Math.round((profile.cv_text.length / 500) * 100))}%
-                      </p>
-                      <div className="w-48 h-1 bg-white/5 rounded-full overflow-hidden">
-                        <div 
-                          className={`h-full transition-all duration-500 ${profile.cv_text.length >= 500 ? 'bg-green-400' : profile.cv_text.length >= 200 ? 'bg-neon-blue' : 'bg-neon-orange'}`} 
-                          style={{ width: `${Math.min(100, (profile.cv_text.length / 500) * 100)}%` }}
-                        />
-                      </div>
-                    </div>
-                    {profile.cv_text.length >= 50 ? (
-                      <span className="flex items-center gap-1 text-[10px] text-green-400 font-bold uppercase tracking-widest">
-                        <CheckCircle2 size={12} /> Ready to Start
-                      </span>
-                    ) : (
-                      <span className="flex items-center gap-1 text-[10px] text-neon-orange font-bold uppercase tracking-widest animate-pulse">
-                        <AlertCircle size={12} /> Minimal Info Needed
-                      </span>
+            <GlassCard className="p-0 overflow-hidden bg-[#0a0a0a]/50">
+              <div className="flex border-b border-white/5">
+                {[
+                  { id: SourceType.text, label: 'RAW TEXT', icon: <Type size={14} /> },
+                  { id: SourceType.link, label: 'LINK FEED', icon: <LinkIcon size={14} /> },
+                  { id: SourceType.image, label: 'IMAGE SENSOR', icon: <ImageIcon size={14} /> }
+                ].map((type) => (
+                  <button
+                    key={type.id}
+                    onClick={() => setCaptureInput({ ...captureInput, type: type.id as SourceType })}
+                    className={cn(
+                      "flex-1 flex items-center justify-center gap-2 py-4 text-[10px] font-black uppercase tracking-[0.2em] transition-all",
+                      captureInput.type === type.id 
+                        ? "bg-white/5 text-neon-blue border-b-2 border-neon-blue" 
+                        : "text-white/30 hover:text-white/60"
                     )}
-                  </div>
-                </div>
-              </GlassCard>
-            </motion.div>
-          )}
-
-          {/* CAPTURE STEP */}
-          {step === 'capture' && (
-            <motion.div 
-              key="capture"
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 1.05 }}
-              className="max-w-2xl mx-auto space-y-12 py-10"
-            >
-              <div className="text-center space-y-2">
-                <h2 className="text-4xl font-black tracking-tighter uppercase">CAPTURE <span className="text-neon-blue">JOB</span></h2>
-                <p className="text-white/40">Feed the AI with a job description to begin the matching process.</p>
+                  >
+                    {type.icon} {type.label}
+                  </button>
+                ))}
               </div>
 
-              <div className="space-y-6">
-                <div className="flex p-1 bg-white/5 border border-white/10 rounded-xl">
-                  {[
-                    { id: SourceType.text, icon: <Type size={18} />, label: "Text" },
-                    { id: SourceType.link, icon: <LinkIcon size={18} />, label: "Link" },
-                    { id: SourceType.image, icon: <ImageIcon size={18} />, label: "Image" }
-                  ].map(tab => (
-                    <button
-                      key={tab.id}
-                      onClick={() => {
-                        setCaptureInput({ type: tab.id, value: '' });
-                        setError(null);
-                      }}
-                      className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-lg transition-all ${captureInput.type === tab.id ? 'bg-neon-blue/20 text-neon-blue border border-neon-blue/30 shadow-[0_0_10px_rgba(0,243,255,0.1)]' : 'text-white/40 hover:text-white/60'}`}
-                    >
-                      {tab.icon} <span className="text-xs font-bold uppercase tracking-widest">{tab.label}</span>
-                    </button>
-                  ))}
-                </div>
-
-                <GlassCard glow="blue" className="p-1">
-                  {captureInput.type === SourceType.image ? (
-                    <div className="min-h-[200px] flex flex-col items-center justify-center p-8 border-2 border-dashed border-white/10 rounded-lg hover:border-neon-blue/50 transition-all group relative overflow-hidden">
+              <div className="p-8 space-y-6">
+                {captureInput.type === SourceType.text ? (
+                  <FuturisticTextarea
+                    label="SYSTEM INPUT: RAW JOB DATA"
+                    placeholder="Paste job description, requirements, or responsibilities..."
+                    value={captureInput.value}
+                    onChange={(e) => setCaptureInput({ ...captureInput, value: e.target.value })}
+                    rows={12}
+                  />
+                ) : captureInput.type === SourceType.link ? (
+                  <div className="space-y-4">
+                    <FuturisticInput
+                      label="NEURAL LINK: SOURCE URL"
+                      placeholder="https://linkedin.com/jobs/view/..."
+                      value={captureInput.value}
+                      onChange={(e) => setCaptureInput({ ...captureInput, value: e.target.value })}
+                    />
+                    <div className="p-4 rounded-xl bg-neon-blue/5 border border-neon-blue/20 flex gap-4 items-start">
+                      <div className="p-2 rounded-lg bg-neon-blue/20 text-neon-blue">
+                         <Globe size={20} />
+                      </div>
+                      <div className="space-y-1">
+                        <p className="text-[10px] font-black uppercase tracking-widest text-neon-blue">Remote Synchronizer</p>
+                        <p className="text-[11px] text-white/50 leading-relaxed italic">Directly extraction logic will attempt to pull clean metadata from the provided endpoint.</p>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-6">
+                    <div className="relative group">
                       <input 
                         type="file" 
-                        accept="image/*" 
-                        className="absolute inset-0 opacity-0 cursor-pointer z-10"
-                        onChange={async (e) => {
+                        accept="image/*"
+                        id="image-sensor-upload"
+                        className="hidden"
+                        onChange={(e) => {
                           const file = e.target.files?.[0];
                           if (file) {
                             const reader = new FileReader();
@@ -1332,305 +1177,248 @@ function AppContent() {
                           }
                         }}
                       />
-                      {captureInput.value ? (
-                        <div className="relative w-full h-full flex items-center justify-center">
-                          <img src={captureInput.value} alt="Preview" className="max-h-[300px] rounded-lg shadow-2xl" />
-                          <button 
-                            onClick={(e) => { 
-                              e.stopPropagation(); 
-                              setCaptureInput({ ...captureInput, value: '' }); 
-                              setError(null);
-                            }}
-                            className="absolute top-2 right-2 p-2 bg-black/50 rounded-full hover:bg-red-500/50 transition-colors z-20"
-                          >
-                            <X size={16} />
-                          </button>
-                        </div>
-                      ) : (
-                        <>
-                          <div className="w-16 h-16 rounded-full bg-white/5 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
-                            <Upload size={32} className="text-white/20 group-hover:text-neon-blue" />
+                      <label 
+                        htmlFor="image-sensor-upload"
+                        className="flex flex-col items-center justify-center gap-4 p-12 border-2 border-dashed border-white/10 rounded-2xl bg-white/5 hover:bg-white/10 hover:border-neon-blue/50 transition-all cursor-pointer group"
+                      >
+                        {captureInput.value && captureInput.value.startsWith('data:image') ? (
+                          <div className="relative w-full aspect-video rounded-lg overflow-hidden border border-white/10">
+                            <img src={captureInput.value} alt="Preview" className="w-full h-full object-cover" />
+                            <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                              <p className="text-[10px] font-black uppercase tracking-widest text-white">Switch Image</p>
+                            </div>
                           </div>
-                          <p className="text-sm font-bold uppercase tracking-widest text-white/40 group-hover:text-white transition-colors">Upload Job Poster Image</p>
-                          <p className="text-[10px] text-white/20 uppercase tracking-[0.2em] mt-2">PNG, JPG, WEBP (MAX 5MB)</p>
-                        </>
-                      )}
+                        ) : (
+                          <>
+                            <div className="p-4 rounded-full bg-neon-blue/10 text-neon-blue group-hover:scale-110 transition-transform">
+                              <Upload size={32} />
+                            </div>
+                            <div className="text-center space-y-1">
+                              <p className="text-xs font-bold uppercase tracking-tight">Upload Job Screenshot</p>
+                              <p className="text-[10px] text-white/30 uppercase tracking-widest font-bold">PDF, PNG, JPG accepted for neural scanning.</p>
+                            </div>
+                          </>
+                        )}
+                      </label>
                     </div>
-                  ) : (
-                    <FuturisticTextarea 
-                      placeholder={
-                        captureInput.type === SourceType.text ? "Paste the job description text here..." :
-                        "Paste the job posting URL here..."
-                      }
-                      className="!bg-transparent !border-none !rounded-none min-h-[200px] text-lg"
-                      value={captureInput.value}
-                      onChange={e => setCaptureInput({...captureInput, value: e.target.value})}
-                    />
-                  )}
-                </GlassCard>
-
-                <div className="flex gap-4">
-                  <NeonButton 
-                    variant="blue" 
-                    className="flex-1 py-4 text-lg"
-                    onClick={handleExtract}
-                    isLoading={loading}
-                    disabled={!captureInput.value}
-                  >
-                    <Zap size={20} /> Process with AI
-                  </NeonButton>
-                  <button 
-                    onClick={() => setStep('profile')}
-                    className="px-6 rounded-lg border border-white/10 hover:bg-white/5 transition-all text-white/60"
-                  >
-                    <ArrowLeft size={20} />
-                  </button>
-                </div>
-                
-                {loading && (
-                  <motion.p 
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    className="text-center text-neon-blue text-xs font-mono uppercase tracking-[0.2em] animate-pulse"
-                  >
-                    {loadingMessage}
-                  </motion.p>
-                )}
-                
-                {error && (
-                  <div className="p-4 rounded-lg bg-red-500/10 border border-red-500/30 text-red-400 text-sm flex flex-col gap-3">
-                    <div className="flex items-start gap-3">
-                      <AlertCircle className="shrink-0" size={18} />
-                      <p>{error}</p>
-                    </div>
-                    {debugText && (
-                      <div className="mt-2 p-2 bg-black/40 rounded border border-red-500/10 text-[10px] font-mono text-red-400/60 overflow-hidden break-all">
-                        Scraped: {debugText}
+                    <div className="p-4 rounded-xl bg-neon-purple/5 border border-neon-purple/20 flex gap-4 items-start">
+                      <div className="p-2 rounded-lg bg-neon-purple/20 text-neon-purple">
+                         <Cpu size={20} />
                       </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            </motion.div>
-          )}
-
-          {/* RESULTS STEP */}
-          {step === 'results' && extractedJob && (
-            <motion.div 
-              key="results"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              className="grid grid-cols-1 lg:grid-cols-12 gap-8"
-            >
-              {/* Left Column: Job Details */}
-              <div className="lg:col-span-7 space-y-8">
-                <div className="flex items-center gap-4">
-                  <button 
-                    onClick={() => setStep('capture')}
-                    className="p-2 rounded-lg border border-white/10 hover:bg-white/5 text-white/40"
-                  >
-                    <ArrowLeft size={20} />
-                  </button>
-                  <h2 className="text-2xl font-bold tracking-tight">JOB <span className="text-neon-blue">ANALYSIS</span></h2>
-                  <button 
-                    onClick={() => {
-                      setRawDataJob(extractedJob);
-                      setShowRawData(true);
-                    }}
-                    className="ml-auto flex items-center gap-2 px-3 py-1.5 rounded-lg border border-white/10 hover:bg-white/5 text-[10px] font-bold uppercase tracking-widest text-white/40 transition-all"
-                  >
-                    <Eye size={14} /> View Raw Source
-                  </button>
-                </div>
-
-                <GlassCard className="space-y-6">
-                  <div className="space-y-2">
-                    <div className="flex justify-between items-start">
                       <div className="space-y-1">
-                        <h3 className="text-3xl font-black tracking-tighter leading-tight">{extractedJob.title}</h3>
-                        <div className="flex items-center gap-3">
-                          <p className="text-sm text-white/40 font-bold uppercase tracking-widest">{extractedJob.company}</p>
-                          {extractedJob.source_url && (
-                            <a 
-                              href={extractedJob.source_url} 
-                              target="_blank" 
-                              rel="noopener noreferrer"
-                              className="text-xs text-neon-blue hover:underline flex items-center gap-1 transition-all"
-                            >
-                              <LinkIcon size={12} /> Original Source
-                            </a>
-                          )}
-                        </div>
-                      </div>
-                      <div className="flex flex-wrap gap-2 items-center">
-                        <select 
-                          className={cn(
-                            "px-2 py-1 rounded-full text-[10px] font-black uppercase tracking-widest border bg-transparent focus:outline-none transition-all cursor-pointer",
-                            extractedJob.status === JobStatus.applied ? 'bg-green-500/10 border-green-500/30 text-green-400' :
-                            extractedJob.status === JobStatus.follow_up ? 'bg-orange-500/10 border-orange-500/30 text-orange-400' :
-                            extractedJob.status === JobStatus.interview ? 'bg-purple-500/10 border-purple-500/30 text-purple-400' :
-                            extractedJob.status === JobStatus.offer ? 'bg-neon-blue/10 border-neon-blue/30 text-neon-blue' :
-                            extractedJob.status === JobStatus.rejected ? 'bg-red-500/10 border-red-500/30 text-red-400' :
-                            'bg-white/10 border-white/20 text-white/60'
-                          )}
-                          value={extractedJob.status || JobStatus.saved}
-                          onChange={async (e) => {
-                            const newStatus = e.target.value as JobStatus;
-                            if (extractedJob.id && user) {
-                              try {
-                                await updateJobStatus(extractedJob.id, newStatus, extractedJob.postgres_id);
-                                setExtractedJob({ ...extractedJob, status: newStatus });
-                              } catch (err: any) {
-                                setError(err.message);
-                              }
-                            }
-                          }}
-                        >
-                          {Object.values(JobStatus).map(status => (
-                            <option key={status} value={status} className="bg-black text-white">{status.replace('_', ' ')}</option>
-                          ))}
-                        </select>
-                        <div className="flex flex-col items-end gap-2">
-                          {renderBadge(extractedJob.extraction_confidence, extractedJob.extraction_confidence === ExtractionConfidence.high ? 'green' : 'orange')}
-                          <span className="text-[10px] text-white/40 font-mono uppercase tracking-widest">Confidence Score</span>
-                        </div>
+                        <p className="text-[10px] font-black uppercase tracking-widest text-neon-purple">Vision Processor Ready</p>
+                        <p className="text-[11px] text-white/50 leading-relaxed italic">Optical character recognition will attempt to reconstruct the job's neural structure from visual identifiers.</p>
                       </div>
                     </div>
-                    <p className="text-neon-blue font-bold tracking-widest uppercase text-xs">{extractedJob.company}</p>
                   </div>
+                )}
 
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                    {[
-                      { icon: <MapPin size={14} />, label: "Location", value: extractedJob.location || 'Unknown' },
-                      { icon: <Briefcase size={14} />, label: "Type", value: extractedJob.employment_type },
-                      { icon: <Globe size={14} />, label: "Policy", value: extractedJob.remote_policy },
-                      { icon: <Clock size={14} />, label: "Deadline", value: extractedJob.deadline || 'N/A' }
-                    ].map((item, i) => (
-                      <div key={i} className="p-3 rounded-lg bg-white/5 border border-white/5 space-y-1">
-                        <div className="flex items-center gap-1.5 text-white/30">
-                          {item.icon} <span className="text-[9px] uppercase font-bold tracking-widest">{item.label}</span>
+                <NeonButton 
+                  variant="blue" 
+                  className="w-full py-6 text-md font-black italic tracking-tighter uppercase"
+                  onClick={handleExtract}
+                  isLoading={loading}
+                  disabled={!captureInput.value.trim()}
+                >
+                  <Zap size={22} className="mr-3" /> Start Analysis
+                </NeonButton>
+              </div>
+            </GlassCard>
+            {loading && (
+              <div className="text-center space-y-4">
+                <div className="w-1.5 h-1.5 rounded-full bg-neon-blue mx-auto animate-ping" />
+                <p className="text-[10px] font-mono text-neon-blue uppercase tracking-[0.4em] animate-pulse">{loadingMessage}</p>
+              </div>
+            )}
+          </motion.div>
+        );
+      case 'results':
+        return extractedJob ? (
+          <div key="results" className="space-y-8">
+            <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 pb-8 border-b border-white/5">
+              <div className="space-y-4">
+                <div className="inline-flex items-center gap-3 px-3 py-1 rounded bg-neon-blue/10 border border-neon-blue/20 text-neon-blue text-[8px] font-black uppercase tracking-widest">
+                  Extraction Complete
+                </div>
+                <h1 className="text-6xl font-black tracking-tighter uppercase italic leading-none">{extractedJob.title}</h1>
+                <p className="text-3xl text-neon-blue font-bold tracking-tighter uppercase">{extractedJob.company}</p>
+              </div>
+              <div className="flex gap-4">
+                 <select 
+                  value={extractedJob.status}
+                  onChange={(e) => handleUpdateJobStatus(extractedJob.id!, e.target.value as JobStatus)}
+                  className="bg-black/40 border border-white/10 rounded-xl px-4 py-2 text-[10px] font-black uppercase tracking-widest text-white/50 outline-none hover:bg-white/5 transition-all cursor-pointer"
+                >
+                  {Object.values(JobStatus).map(status => (
+                    <option key={status} value={status} className="bg-[#050505]">{status.replace('_', ' ').toUpperCase()}</option>
+                  ))}
+                </select>
+                <NeonButton variant="blue" onClick={() => setStep('inbox')} className="!px-6">
+                  <Inbox size={18} className="mr-2" /> Operations Hub
+                </NeonButton>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+              <div className="lg:col-span-7 space-y-8">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <GlassCard className="p-6 space-y-4 border-white/5">
+                    <h3 className="text-[9px] font-black uppercase tracking-[0.2em] text-white/20 flex items-center gap-2">
+                       <Database size={12} /> JOB REQUIREMENTS
+                    </h3>
+                    <div className="space-y-3">
+                      {extractedJob.requirements.map((req, i) => (
+                        <div key={i} className="flex gap-3 items-start group">
+                          <div className="w-1.5 h-1.5 rounded-full bg-neon-blue/20 mt-1.5 group-hover:bg-neon-blue" />
+                          <p className="text-xs text-white/50 group-hover:text-white transition-colors">{req}</p>
                         </div>
-                        <p className="text-xs font-medium truncate">{item.value}</p>
-                      </div>
-                    ))}
-                  </div>
-
-                  <div className="space-y-4">
-                    <h4 className="text-[10px] uppercase font-bold tracking-[0.3em] text-white/40 border-b border-white/5 pb-2">Summary</h4>
-                    <p className="text-sm text-white/70 leading-relaxed">{extractedJob.summary}</p>
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                    <div className="space-y-4">
-                      <h4 className="text-[10px] uppercase font-bold tracking-[0.3em] text-white/40 border-b border-white/5 pb-2">Required Skills</h4>
-                      <div className="flex flex-wrap gap-2">
-                        {(extractedJob.required_skills || []).map(skill => (
-                          <span key={skill} className="px-2 py-1 rounded bg-white/5 border border-white/10 text-[10px] text-white/60">
-                            {skill}
-                          </span>
-                        ))}
-                      </div>
+                      ))}
                     </div>
-                    <div className="space-y-4">
-                      <h4 className="text-[10px] uppercase font-bold tracking-[0.3em] text-white/40 border-b border-white/5 pb-2">Requirements</h4>
-                      <ul className="space-y-2">
-                        {(extractedJob.requirements || []).slice(0, 5).map((req, i) => (
-                          <li key={i} className="text-xs text-white/50 flex gap-2">
-                            <span className="text-neon-blue font-mono">•</span> {req}
-                          </li>
-                        ))}
-                      </ul>
+                  </GlassCard>
+                  <GlassCard className="p-6 space-y-4 border-white/5">
+                    <h3 className="text-[9px] font-black uppercase tracking-[0.2em] text-white/20 flex items-center gap-2">
+                       <Cpu size={12} /> KEY SKILLS
+                    </h3>
+                    <div className="flex flex-wrap gap-2">
+                      {extractedJob.required_skills.map((skill, i) => (
+                        <span key={i} className="px-3 py-1.5 rounded bg-white/5 border border-white/5 text-[9px] font-black text-white/40 uppercase">
+                          {skill}
+                        </span>
+                      ))}
                     </div>
-                  </div>
+                  </GlassCard>
+                </div>
+                <GlassCard className="p-8 border-white/5 space-y-4">
+                  <h3 className="text-[9px] font-black uppercase tracking-[0.2em] text-white/20">JOB DESCRIPTION</h3>
+                  <p className="text-white/50 leading-relaxed italic text-lg font-medium">{extractedJob.summary || extractedJob.raw_content?.substring(0, 500)}</p>
                 </GlassCard>
+
+                {generatedApp && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                  >
+                    <GlassCard glow="purple" className="p-8 space-y-6">
+                      <div className="flex items-center justify-between border-b border-white/5 pb-4">
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 rounded-xl bg-neon-purple/10 flex items-center justify-center text-neon-purple">
+                            <Mail size={20} />
+                          </div>
+                          <div>
+                            <h3 className="text-lg font-black uppercase italic tracking-tight">Synthesized Artifact</h3>
+                            <p className="text-[10px] text-white/30 uppercase tracking-widest">{appMode} // {appTone}</p>
+                          </div>
+                        </div>
+                        <button onClick={() => setGeneratedApp(null)} className="text-white/20 hover:text-white"><X size={20}/></button>
+                      </div>
+
+                      <div className="space-y-6">
+                        {generatedApp.subject && (
+                          <div className="p-4 rounded-xl bg-white/5 border border-white/5 space-y-1">
+                            <span className="text-[9px] font-black uppercase tracking-widest text-white/20">Subject Line</span>
+                            <p className="text-sm font-bold text-white/80">{generatedApp.subject}</p>
+                          </div>
+                        )}
+                        <div className="p-6 rounded-2xl bg-white/5 border border-white/5 max-h-[500px] overflow-y-auto futuristic-scroll prose-invert">
+                           <div className="prose prose-invert prose-sm max-w-none prose-p:text-white/70 prose-headings:text-white prose-strong:text-neon-purple">
+                            <ReactMarkdown>
+                              {generatedApp.email_body || generatedApp.cover_note || generatedApp.short_fit_answer || ''}
+                            </ReactMarkdown>
+                          </div>
+                        </div>
+                        <div className="flex flex-wrap gap-4 pt-4">
+                          <NeonButton 
+                            variant="purple" 
+                            className="flex-1 !py-4"
+                            onClick={() => {
+                              const text = generatedApp.email_body || generatedApp.cover_note || generatedApp.short_fit_answer || '';
+                              navigator.clipboard.writeText(text);
+                            }}
+                          >
+                            <Copy size={18} className="mr-2" /> Copy to Clipboard
+                          </NeonButton>
+                          <NeonButton 
+                            variant="blue" 
+                            className="flex-1 !py-4"
+                            onClick={handleSaveApplication}
+                            isLoading={loading}
+                          >
+                            <History size={18} className="mr-2" /> Commit to History
+                          </NeonButton>
+                        </div>
+                      </div>
+                    </GlassCard>
+                  </motion.div>
+                )}
               </div>
 
-              {/* Right Column: AI Analysis & Generation */}
-              <div className="lg:col-span-5 space-y-8">
-                {/* Fit Analysis */}
-                <GlassCard glow={analysis?.verdict === Verdict.relevant ? 'blue' : 'orange'} className="space-y-6">
+              <div className="lg:col-span-5 space-y-6">
+                {/* AI Fit Analysis */}
+                <GlassCard glow={analysis?.verdict === Verdict.relevant ? 'blue' : analysis?.verdict === Verdict.maybe ? 'orange' : 'red'} className="p-8 space-y-8">
                   <div className="flex items-center justify-between">
-                    <h3 className="text-lg font-bold tracking-tight flex items-center gap-2">
-                      <Cpu size={18} className="text-neon-blue" /> AI FIT MATCH
+                    <h3 className="text-xl font-black uppercase tracking-tight italic flex items-center gap-2">
+                       <Target size={20} className="text-neon-blue" /> JOB MATCH
                     </h3>
                     {analysis && (
-                      <div className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest border ${
-                        analysis.verdict === Verdict.relevant ? 'bg-green-500/10 border-green-500/30 text-green-400' :
-                        analysis.verdict === Verdict.maybe ? 'bg-orange-500/10 border-orange-500/30 text-orange-400' :
-                        'bg-red-500/10 border-red-500/30 text-red-400'
-                      }`}>
-                        {analysis.verdict.replace('_', ' ')}
-                      </div>
+                       <span className={cn(
+                        "px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest border",
+                        analysis.verdict === Verdict.relevant ? "bg-green-500/10 border-green-500/30 text-green-400" :
+                        analysis.verdict === Verdict.maybe ? "bg-orange-500/10 border-orange-500/30 text-orange-400" :
+                        "bg-red-500/10 border-red-500/30 text-red-500"
+                      )}>
+                        {analysis.verdict}
+                      </span>
                     )}
                   </div>
 
                   {!analysis ? (
-                    <div className="py-10 text-center space-y-4">
-                      {error ? (
-                        <div className="p-4 rounded-lg bg-red-500/10 border border-red-500/30 text-red-400 text-xs flex flex-col items-center gap-3">
-                          <AlertCircle size={24} />
-                          <p className="font-bold uppercase tracking-widest">Analysis Failed</p>
-                          <p className="text-[10px] opacity-70">{error}</p>
-                          <NeonButton 
-                            variant="blue" 
-                            className="mt-2"
-                            onClick={() => extractedJob && handleAnalyze(extractedJob)}
-                          >
-                            Retry Analysis
-                          </NeonButton>
-                        </div>
-                      ) : loadingAnalysis ? (
+                    <div className="py-12 text-center space-y-6">
+                      {loadingAnalysis ? (
                         <>
                           <div className="w-12 h-12 border-2 border-neon-blue/30 border-t-neon-blue rounded-full animate-spin mx-auto" />
-                          <p className="text-xs text-white/40 font-mono uppercase tracking-widest">Processing Fit Analysis...</p>
+                          <p className="text-[10px] font-black uppercase tracking-widest text-white/30">{loadingMessage}</p>
                         </>
                       ) : (
-                        <div className="p-6 rounded-xl bg-neon-blue/5 border border-neon-blue/20 text-center space-y-4">
-                          <Target className="mx-auto text-neon-blue opacity-50" size={32} />
-                          <div className="space-y-1">
-                            <p className="text-sm font-bold text-white/90">Fit Match Ready</p>
-                            <p className="text-[10px] text-white/40 uppercase tracking-widest">Analyze this job against your profile</p>
+                        <>
+                          <Target size={48} className="mx-auto text-white/5" />
+                          <div className="space-y-2">
+                            <p className="text-sm font-bold text-white/60">Ready for Alignment</p>
+                            <p className="text-[10px] text-white/30 uppercase tracking-widest">Compare this job against your neural profile</p>
                           </div>
-                          <NeonButton 
-                            variant="blue" 
-                            className="w-full py-3"
-                            onClick={() => extractedJob && handleAnalyze(extractedJob)}
-                          >
-                            Run Fit Match
-                          </NeonButton>
-                        </div>
+                          <NeonButton variant="blue" className="w-full py-4 uppercase font-black italic tracking-tighter" onClick={() => handleAnalyze(extractedJob)}>Run Alignment Check</NeonButton>
+                        </>
                       )}
                     </div>
                   ) : (
-                    <div className="space-y-6">
-                      <div className="p-4 rounded-xl bg-white/5 border border-white/5 space-y-2">
-                        <div className="flex items-center gap-2 text-neon-blue">
-                          <ShieldCheck size={16} />
-                          <span className="text-[10px] font-bold uppercase tracking-widest">Recommendation</span>
+                    <div className="space-y-8">
+                      <div className="p-6 rounded-2xl bg-white/5 border border-white/5 space-y-3">
+                         <div className="flex items-center gap-2 text-neon-blue">
+                          <CheckCircle2 size={16} />
+                          <span className="text-[10px] font-black uppercase tracking-widest">Compiler Suggestion</span>
                         </div>
-                        <p className="text-sm font-bold text-white/90">{analysis.apply_recommendation.replace('_', ' ')}</p>
-                        <p className="text-xs text-white/50">{analysis.fit_summary}</p>
+                        <p className="text-md font-bold text-white/90 leading-tight uppercase italic">{analysis.apply_recommendation}</p>
+                        <p className="text-xs text-white/50 leading-relaxed italic">{analysis.fit_summary}</p>
                       </div>
 
-                      <div className="space-y-4">
-                        <div className="space-y-2">
-                          <h4 className="text-[10px] uppercase font-bold tracking-widest text-white/40">Key Strengths</h4>
-                          <div className="space-y-1.5">
-                            {(analysis.reasons || []).map((reason, i) => (
-                              <div key={i} className="text-xs text-green-400/80 flex gap-2">
-                                <CheckCircle2 size={12} className="shrink-0 mt-0.5" /> {reason}
+                      <div className="space-y-6">
+                        <div className="space-y-3">
+                          <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-white/30">Strategic Strengths</h4>
+                          <div className="space-y-2">
+                            {analysis.reasons.map((reason, i) => (
+                              <div key={i} className="flex gap-2 text-xs text-green-400/80 italic font-medium">
+                                <span className="text-neon-blue">•</span> {reason}
                               </div>
                             ))}
                           </div>
                         </div>
-                        
-                        {(analysis.gaps || []).length > 0 && (
-                          <div className="space-y-2">
-                            <h4 className="text-[10px] uppercase font-bold tracking-widest text-white/40">Potential Gaps</h4>
-                            <div className="space-y-1.5">
-                              {(analysis.gaps || []).map((gap, i) => (
-                                <div key={i} className="text-xs text-orange-400/80 flex gap-2">
-                                  <AlertCircle size={12} className="shrink-0 mt-0.5" /> {gap}
+
+                        {analysis.gaps.length > 0 && (
+                          <div className="space-y-3">
+                            <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-white/30">Detected Anomalies</h4>
+                            <div className="space-y-2">
+                              {analysis.gaps.map((gap, i) => (
+                                <div key={i} className="flex gap-2 text-xs text-orange-500/80 italic font-medium">
+                                  <span className="text-neon-orange">•</span> {gap}
                                 </div>
                               ))}
                             </div>
@@ -1638,749 +1426,562 @@ function AppContent() {
                         )}
                       </div>
 
-                      {!generatedApp && (
-                        <div className="space-y-4 pt-4 border-t border-white/5">
-                          <div className="grid grid-cols-2 gap-3">
-                            <div className="space-y-1.5">
-                              <label className="text-[9px] uppercase font-bold tracking-widest text-white/30">Tone</label>
-                              <select 
-                                className="w-full bg-white/5 border border-white/10 rounded px-2 py-1.5 text-xs text-white focus:outline-none"
-                                value={appTone}
-                                onChange={e => setAppTone(e.target.value as Tone)}
-                              >
-                                <option value={Tone.professional}>Professional</option>
-                                <option value={Tone.confident}>Confident</option>
-                                <option value={Tone.concise}>Concise</option>
-                              </select>
-                            </div>
-                            <div className="space-y-1.5">
-                              <label className="text-[9px] uppercase font-bold tracking-widest text-white/30">Mode</label>
-                              <select 
-                                className="w-full bg-white/5 border border-white/10 rounded px-2 py-1.5 text-xs text-white focus:outline-none"
-                                value={appMode}
-                                onChange={e => setAppMode(e.target.value as OutputMode)}
-                              >
-                                <option value={OutputMode.email}>Email Draft</option>
-                                <option value={OutputMode.form_answers}>Form Answers</option>
-                              </select>
-                            </div>
-                          </div>
-                          <NeonButton 
-                            variant="blue" 
-                            className="w-full py-3"
-                            onClick={handleGenerate}
-                            isLoading={loading}
-                          >
-                            <Zap size={18} /> Generate Application
-                          </NeonButton>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </GlassCard>
-
-                {/* Generated Content */}
-                {generatedApp && (
-                  <motion.div
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                  >
-                    <GlassCard glow="purple" className="space-y-6">
-                      <div className="flex items-center justify-between">
-                        <h3 className="text-lg font-bold tracking-tight flex items-center gap-2">
-                          <Mail size={18} className="text-neon-purple" /> GENERATED OUTPUT
-                        </h3>
-                        <button 
-                          onClick={() => setGeneratedApp(null)}
-                          className="text-white/30 hover:text-white transition-colors"
-                        >
-                          <X size={18} />
-                        </button>
-                      </div>
-
-                      <div className="space-y-4">
-                        {generatedApp.subject && (
-                          <div className="p-3 rounded-lg bg-white/5 border border-white/5 space-y-1">
-                            <span className="text-[9px] uppercase font-bold tracking-widest text-white/30">Subject</span>
-                            <p className="text-xs font-medium">{generatedApp.subject}</p>
-                          </div>
-                        )}
-
-                        <div className="p-4 rounded-xl bg-white/5 border border-white/5 max-h-[400px] overflow-y-auto futuristic-scroll">
-                          <div className="prose prose-invert prose-xs max-w-none">
-                            <ReactMarkdown>
-                              {generatedApp.email_body || generatedApp.cover_note || generatedApp.short_fit_answer || ''}
-                            </ReactMarkdown>
-                          </div>
-                        </div>
-
-                        <div className="flex gap-3">
-                          <NeonButton 
-                            variant="purple" 
-                            className="flex-1"
-                            onClick={() => {
-                              const text = generatedApp.email_body || generatedApp.cover_note || generatedApp.short_fit_answer || '';
-                              navigator.clipboard.writeText(text);
-                            }}
-                          >
-                            <Copy size={16} className="mr-2" /> Copy
-                          </NeonButton>
-                          {user && (
-                            <NeonButton 
-                              variant="blue" 
-                              className="flex-1"
-                              onClick={handleSaveApplication}
-                              isLoading={loading}
+                      <div className="pt-8 border-t border-white/5 space-y-6">
+                        <div className="grid grid-cols-2 gap-4">
+                           <div className="space-y-2">
+                            <label className="text-[9px] font-black uppercase tracking-widest text-white/20 ml-1">Synthesis Mode</label>
+                             <select 
+                              value={appMode}
+                              onChange={e => setAppMode(e.target.value as any)}
+                              className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-xs text-white/70 outline-none hover:border-white/20 transition-all cursor-pointer"
                             >
-                              Save to History
-                            </NeonButton>
-                          )}
-                          {extractedJob.application_url && (
-                            <a 
-                              href={extractedJob.application_url} 
-                              target="_blank" 
-                              rel="noopener noreferrer"
-                              className="flex items-center justify-center gap-2 px-4 py-2 rounded-lg border border-neon-blue text-neon-blue hover:bg-neon-blue hover:text-black transition-all"
-                            >
-                              Apply <ExternalLink size={16} />
-                            </a>
-                          )}
-                        </div>
-                      </div>
-                    </GlassCard>
-                  </motion.div>
-                )}
-              </div>
-            </motion.div>
-          )}
-
-          {/* DATABASE STEP */}
-          {step === 'database' && (
-            <motion.div 
-              key="database"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              className="space-y-8"
-            >
-              <div className="flex items-center justify-between">
-                <div>
-                  <h2 className="text-3xl font-bold tracking-tight uppercase">JOB <span className="text-neon-blue">RECORDS</span></h2>
-                  <p className="text-white/40 text-sm">Efficient querying and management of your job database.</p>
-                </div>
-                <NeonButton variant="blue" onClick={() => setStep('capture')}>
-                  <Plus size={18} className="mr-2" /> New Record
-                </NeonButton>
-              </div>
-
-              <GlassCard className="overflow-hidden">
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left border-collapse">
-                    <thead>
-                      <tr className="border-b border-white/5 bg-white/5">
-                        <th className="p-4 text-[10px] font-bold uppercase tracking-widest text-white/40">Title</th>
-                        <th className="p-4 text-[10px] font-bold uppercase tracking-widest text-white/40">Company</th>
-                        <th className="p-4 text-[10px] font-bold uppercase tracking-widest text-white/40">Location</th>
-                        <th className="p-4 text-[10px] font-bold uppercase tracking-widest text-white/40">Status</th>
-                        <th className="p-4 text-[10px] font-bold uppercase tracking-widest text-white/40">Captured</th>
-                        <th className="p-4 text-[10px] font-bold uppercase tracking-widest text-white/40">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-white/5">
-                      {jobs.map((job) => (
-                        <tr key={job.id} className="hover:bg-white/5 transition-colors group">
-                          <td className="p-4">
-                            <p className="text-sm font-bold text-white/90">{job.title}</p>
-                          </td>
-                          <td className="p-4">
-                            <p className="text-xs text-neon-blue font-bold uppercase tracking-widest">{job.company}</p>
-                          </td>
-                          <td className="p-4 text-xs text-white/40">{job.location || 'N/A'}</td>
-                          <td className="p-4">
-                            <select 
-                              className={cn(
-                                "px-2 py-1 rounded-full text-[10px] font-black uppercase tracking-widest border bg-transparent focus:outline-none transition-all cursor-pointer",
-                                job.status === JobStatus.applied ? 'bg-green-500/10 border-green-500/30 text-green-400' :
-                                job.status === JobStatus.follow_up ? 'bg-orange-500/10 border-orange-500/30 text-orange-400' :
-                                job.status === JobStatus.interview ? 'bg-purple-500/10 border-purple-500/30 text-purple-400' :
-                                job.status === JobStatus.offer ? 'bg-neon-blue/10 border-neon-blue/30 text-neon-blue' :
-                                job.status === JobStatus.rejected ? 'bg-red-500/10 border-red-500/30 text-red-400' :
-                                'bg-white/10 border-white/20 text-white/60'
-                              )}
-                              value={job.status || JobStatus.saved}
-                              onChange={async (e) => {
-                                const newStatus = e.target.value as JobStatus;
-                                if (job.id && user) {
-                                  try {
-                                    await updateJobStatus(job.id, newStatus, job.postgres_id);
-                                  } catch (err: any) {
-                                    setError(err.message);
-                                  }
-                                }
-                              }}
-                            >
-                              {Object.values(JobStatus).map(status => (
-                                <option key={status} value={status} className="bg-black text-white">{status.replace('_', ' ')}</option>
-                              ))}
+                               <option value={OutputMode.email} className="bg-[#0a0a0a]">Email Draft</option>
+                               <option value={OutputMode.form_answers} className="bg-[#0a0a0a]">Form Responses</option>
                             </select>
-                          </td>
-                          <td className="p-4 text-[10px] font-mono text-white/40">
-                            {job.captured_at?.toDate ? job.captured_at.toDate().toLocaleDateString() : 'N/A'}
-                          </td>
-                          <td className="p-4">
-                            <div className="flex gap-2">
-                              <button 
-                                onClick={() => { setExtractedJob(job); setStep('results'); }}
-                                className="p-2 rounded-lg hover:bg-white/5 text-white/40 hover:text-neon-blue transition-all"
-                              >
-                                <Eye size={16} />
-                              </button>
-                              <button 
-                                onClick={() => job.id && handleDeleteJob(job.id)}
-                                className="p-2 rounded-lg hover:bg-red-500/10 text-white/20 hover:text-red-400 transition-all"
-                              >
-                                <Trash2 size={16} />
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </GlassCard>
-            </motion.div>
-          )}
-
-          {/* LOGS STEP */}
-          {step === 'logs' && isAdmin && (
-            <motion.div 
-              key="logs"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="space-y-8"
-            >
-              <div className="flex items-center justify-between">
-                <div>
-                  <h2 className="text-3xl font-black tracking-tight uppercase">NEURAL <span className="text-neon-blue">LOGS</span></h2>
-                  <p className="text-white/40 text-sm">Real-time AI interaction auditing and performance monitoring.</p>
-                </div>
-                <div className="flex gap-4 items-center">
-                  <div className="text-right">
-                    <p className="text-[10px] text-white/20 uppercase font-bold tracking-widest">Total Logs</p>
-                    <p className="text-xl font-black text-neon-blue">{aiLogs.length}</p>
-                  </div>
-                </div>
-              </div>
-
-              <GlassCard className="overflow-hidden">
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left border-collapse">
-                    <thead>
-                      <tr className="border-b border-white/5 bg-white/5">
-                        <th className="p-4 text-[10px] font-bold uppercase tracking-widest text-white/40">Timestamp</th>
-                        <th className="p-4 text-[10px] font-bold uppercase tracking-widest text-white/40">Action</th>
-                        <th className="p-4 text-[10px] font-bold uppercase tracking-widest text-white/40">Model</th>
-                        <th className="p-4 text-[10px] font-bold uppercase tracking-widest text-white/40">Latency</th>
-                        <th className="p-4 text-[10px] font-bold uppercase tracking-widest text-white/40">Tokens (I/O)</th>
-                        <th className="p-4 text-[10px] font-bold uppercase tracking-widest text-white/40">Status</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-white/5">
-                      {aiLogs.map((log) => (
-                        <tr key={log.id} className="hover:bg-white/5 transition-colors group">
-                          <td className="p-4 text-[10px] font-mono text-white/60">
-                            {log.timestamp?.toDate ? log.timestamp.toDate().toLocaleString() : 'N/A'}
-                          </td>
-                          <td className="p-4">
-                            <span className="text-[10px] font-bold uppercase tracking-widest text-neon-blue bg-neon-blue/10 px-2 py-1 rounded">
-                              {log.action}
-                            </span>
-                          </td>
-                          <td className="p-4 text-[10px] font-mono text-white/40">{log.model}</td>
-                          <td className="p-4 text-[10px] font-mono text-white/40">{log.latency_ms}ms</td>
-                          <td className="p-4 text-[10px] font-mono text-white/40">
-                            {log.tokens_input || 0} / {log.tokens_output || 0}
-                          </td>
-                          <td className="p-4">
-                            <div className="flex items-center gap-2">
-                              <div className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
-                              <span className="text-[10px] font-bold uppercase tracking-widest text-green-400">SUCCESS</span>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </GlassCard>
-            </motion.div>
-          )}
-
-          {/* INBOX STEP */}
-          {step === 'inbox' && (
-            <motion.div 
-              key="inbox"
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -20 }}
-              className="space-y-8"
-            >
-              <div className="flex items-center justify-between">
-                <div>
-                  <h2 className="text-3xl font-bold tracking-tight uppercase">JOB <span className="text-neon-blue">INBOX</span></h2>
-                  <p className="text-white/40 text-sm">All your captured opportunities in one neural hub.</p>
-                </div>
-                <div className="flex gap-3">
-                  <div className="flex p-1 bg-white/5 border border-white/10 rounded-lg">
-                    {['all', JobStatus.saved, JobStatus.applied, JobStatus.follow_up].map(f => (
-                      <button
-                        key={f}
-                        onClick={() => setInboxFilter(f as any)}
-                        className={`px-3 py-1.5 rounded-md text-[10px] font-bold uppercase tracking-widest transition-all ${inboxFilter === f ? 'bg-neon-blue/20 text-neon-blue' : 'text-white/40 hover:text-white/60'}`}
-                      >
-                        {f}
-                      </button>
-                    ))}
-                  </div>
-                  {user && jobs.length > 0 && (
-                    <button 
-                      onClick={() => {
-                        if (selectedJobIds.length === jobs.length) {
-                          setSelectedJobIds([]);
-                        } else {
-                          setSelectedJobIds(jobs.map(j => j.id!).filter(Boolean));
-                        }
-                      }}
-                      className="flex items-center gap-2 px-4 py-2 rounded-lg bg-white/5 border border-white/10 text-[10px] font-bold uppercase tracking-widest text-white/60 hover:bg-white/10 transition-all"
-                    >
-                      {selectedJobIds.length === jobs.length ? <CheckSquare size={14} className="text-neon-blue" /> : <Square size={14} />}
-                      Select All
-                    </button>
-                  )}
-                  <NeonButton variant="blue" onClick={() => setStep('capture')}>
-                    <Plus size={18} className="mr-2" /> Capture New
-                  </NeonButton>
-                </div>
-              </div>
-
-              {/* Bulk Actions Bar */}
-              <AnimatePresence>
-                {selectedJobIds.length > 0 && (
-                  <motion.div 
-                    initial={{ opacity: 0, y: -20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: -20 }}
-                    className="p-4 rounded-xl bg-neon-blue/10 border border-neon-blue/30 flex items-center justify-between"
-                  >
-                    <div className="flex items-center gap-4">
-                      <span className="text-xs font-bold text-neon-blue uppercase tracking-widest">
-                        {selectedJobIds.length} Items Selected
-                      </span>
-                      <div className="h-4 w-px bg-neon-blue/20" />
-                      <button 
-                        onClick={() => setSelectedJobIds([])}
-                        className="text-[10px] font-bold text-white/40 uppercase tracking-widest hover:text-white transition-colors"
-                      >
-                        Clear
-                      </button>
-                    </div>
-                    <div className="flex gap-3">
-                      <NeonButton 
-                        variant="blue" 
-                        className="!py-1.5 !px-4 !text-[10px]"
-                        onClick={handleBulkMarkAsApplied}
-                        isLoading={loading}
-                      >
-                        Mark as Applied
-                      </NeonButton>
-                      <button 
-                        onClick={handleBulkDeleteJobs}
-                        disabled={loading}
-                        className="flex items-center gap-2 px-4 py-1.5 rounded-lg bg-red-500/10 border border-red-500/30 text-[10px] font-bold uppercase tracking-widest text-red-400 hover:bg-red-500/20 transition-all"
-                      >
-                        <Trash2 size={14} /> Delete
-                      </button>
-                    </div>
-                  </motion.div>
-                )}
-              </AnimatePresence>
-
-              {!user ? (
-                <GlassCard className="py-20 text-center space-y-6">
-                  <div className="w-16 h-16 rounded-full bg-white/5 flex items-center justify-center mx-auto text-white/20">
-                    <ShieldCheck size={32} />
-                  </div>
-                  <div className="space-y-2">
-                    <h3 className="text-xl font-bold">Authentication Required</h3>
-                    <p className="text-white/40 max-w-xs mx-auto">Connect your neural link to access your personal job inbox and sync across devices.</p>
-                  </div>
-                  <NeonButton variant="blue" onClick={signIn}>Connect Now</NeonButton>
-                </GlassCard>
-              ) : jobs.length === 0 ? (
-                <GlassCard className="py-20 text-center space-y-6">
-                  <div className="w-16 h-16 rounded-full bg-white/5 flex items-center justify-center mx-auto text-white/20">
-                    <Inbox size={32} />
-                  </div>
-                  <div className="space-y-2">
-                    <h3 className="text-xl font-bold">Inbox Empty</h3>
-                    <p className="text-white/40">No jobs captured yet. Start by capturing a job from a link or text.</p>
-                  </div>
-                  <NeonButton variant="blue" onClick={() => setStep('capture')}>Start Capturing</NeonButton>
-                </GlassCard>
-              ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                  {jobs.filter(j => inboxFilter === 'all' || j.status === inboxFilter).map(job => (
-                    <GlassCard 
-                      key={job.id} 
-                      className={cn(
-                        "group hover:border-neon-blue/50 transition-all flex flex-col relative cursor-pointer",
-                        selectedJobIds.includes(job.id!) && "border-neon-blue/50 bg-neon-blue/5"
-                      )}
-                      onClick={() => {
-                        setExtractedJob(job);
-                        setStep('results');
-                        handleAnalyze(job);
-                      }}
-                    >
-                      <div className="absolute top-4 left-4 z-10">
-                        <button 
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            if (job.id) {
-                              setSelectedJobIds(prev => 
-                                prev.includes(job.id!) 
-                                  ? prev.filter(id => id !== job.id) 
-                                  : [...prev, job.id!]
-                              );
-                            }
-                          }}
-                          className="text-neon-blue transition-all"
-                        >
-                          {selectedJobIds.includes(job.id!) ? <CheckSquare size={20} /> : <Square size={20} className="opacity-20 group-hover:opacity-100" />}
-                        </button>
-                      </div>
-
-                      <div className="flex justify-between items-start mb-4 pl-8">
-                        <div className="space-y-1">
-                          <h3 className="font-bold text-lg leading-tight group-hover:text-neon-blue transition-colors">{job.title}</h3>
-                          <div className="flex items-center gap-2">
-                            <p className="text-xs text-white/40 font-bold uppercase tracking-widest">{job.company}</p>
-                            {job.source_url && (
-                              <a 
-                                href={job.source_url} 
-                                target="_blank" 
-                                rel="noopener noreferrer"
-                                onClick={(e) => e.stopPropagation()}
-                                className="text-[10px] text-neon-blue/60 hover:text-neon-blue flex items-center gap-1 transition-colors"
-                              >
-                                <LinkIcon size={10} /> Source
-                              </a>
-                            )}
+                          </div>
+                          <div className="space-y-2">
+                            <label className="text-[9px] font-black uppercase tracking-widest text-white/20 ml-1">Behavioral Tone</label>
+                            <select 
+                              value={appTone}
+                              onChange={e => setAppTone(e.target.value as any)}
+                              className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-xs text-white/70 outline-none hover:border-white/20 transition-all cursor-pointer"
+                            >
+                               <option value={Tone.professional} className="bg-[#0a0a0a]">Professional</option>
+                               <option value={Tone.confident} className="bg-[#0a0a0a]">Confident</option>
+                               <option value={Tone.concise} className="bg-[#0a0a0a]">Concise</option>
+                            </select>
                           </div>
                         </div>
-                        <div className="flex items-center gap-1">
-                          <button 
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setRawDataJob(job);
-                              setShowRawData(true);
-                            }}
-                            className="p-1.5 rounded-lg hover:bg-white/10 text-white/20 hover:text-neon-blue transition-all"
-                            title="View Raw Source"
-                          >
-                            <Eye size={14} />
-                          </button>
-                          <button 
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              job.id && handleDeleteJob(job.id);
-                            }}
-                            className="p-1.5 rounded-lg hover:bg-red-500/10 text-white/20 hover:text-red-400 transition-all"
-                          >
-                            <Trash2 size={14} />
-                          </button>
-                        </div>
-                      </div>
-                      
-                      <div className="space-y-3 flex-1">
-                        <div className="flex items-center gap-2 text-[10px] text-white/40">
-                          <MapPin size={12} /> {job.location || 'Unknown'}
-                        </div>
-                        <div className="flex flex-wrap gap-2 items-center">
-                          <select 
-                            onClick={(e) => e.stopPropagation()}
-                            className={cn(
-                              "px-2 py-1 rounded-full text-[10px] font-black uppercase tracking-widest border bg-transparent focus:outline-none transition-all cursor-pointer",
-                              job.status === JobStatus.applied ? 'bg-green-500/10 border-green-500/30 text-green-400' :
-                              job.status === JobStatus.follow_up ? 'bg-orange-500/10 border-orange-500/30 text-orange-400' :
-                              job.status === JobStatus.interview ? 'bg-purple-500/10 border-purple-500/30 text-purple-400' :
-                              job.status === JobStatus.offer ? 'bg-neon-blue/10 border-neon-blue/30 text-neon-blue' :
-                              job.status === JobStatus.rejected ? 'bg-red-500/10 border-red-500/30 text-red-400' :
-                              'bg-white/10 border-white/20 text-white/60'
-                            )}
-                            value={job.status || JobStatus.saved}
-                            onChange={async (e) => {
-                              e.stopPropagation();
-                              const newStatus = e.target.value as JobStatus;
-                              if (job.id && user) {
-                                try {
-                                  await updateJobStatus(job.id, newStatus, job.postgres_id);
-                                } catch (err: any) {
-                                  setError(err.message);
-                                }
-                              }
-                            }}
-                          >
-                            {Object.values(JobStatus).map(status => (
-                              <option key={status} value={status} className="bg-black text-white">{status.replace('_', ' ')}</option>
-                            ))}
-                          </select>
-                          {job.deadline && renderBadge(job.deadline, 'orange')}
-                        </div>
-                        <p className="text-xs text-white/60 line-clamp-3">{job.summary}</p>
-                      </div>
-
-                      <div className="mt-6 pt-4 border-t border-white/5 flex gap-2">
                         <NeonButton 
                           variant="blue" 
-                          className="flex-1 !py-2 !text-[10px]"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setExtractedJob(job);
-                            setStep('results');
-                            handleAnalyze(job);
-                          }}
+                          className="w-full py-6 text-md font-black uppercase italic tracking-tighter"
+                          onClick={handleGenerate}
+                          isLoading={loading}
                         >
-                          Analyze Fit
+                          <Zap size={20} className="mr-2" /> Synthesize Artifact
                         </NeonButton>
-                        {(job.status === JobStatus.applied || job.status === JobStatus.follow_up) && (
-                          <button 
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              const app = applications.find(a => a.job_id === job.id);
-                              if (app) handleFollowUp(job, app);
-                            }}
-                            className="p-2 rounded-lg border border-neon-purple/30 hover:bg-neon-purple/10 text-neon-purple"
-                            title="Generate Follow-up"
-                          >
-                            <Mail size={14} />
-                          </button>
-                        )}
-                        {job.application_url && (
-                          <a 
-                            href={job.application_url} 
-                            target="_blank" 
-                            rel="noopener noreferrer"
-                            onClick={(e) => e.stopPropagation()}
-                            className="p-2 rounded-lg border border-white/10 hover:bg-white/5 text-white/40"
-                          >
-                            <ExternalLink size={14} />
-                          </a>
-                        )}
                       </div>
-                    </GlassCard>
-                  ))}
-                </div>
-              )}
-            </motion.div>
-          )}
+                    </div>
+                  )}
+                </GlassCard>
 
-          {/* APPLICATIONS STEP */}
-          {step === 'applications' && (
-            <motion.div 
-              key="applications"
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -20 }}
-              className="space-y-8"
-            >
-              <div className="flex items-center justify-between">
-                <div>
-                  <h2 className="text-3xl font-bold tracking-tight uppercase">APP <span className="text-neon-purple">HISTORY</span></h2>
-                  <p className="text-white/40 text-sm">Track your generated materials and application status.</p>
-                </div>
-                {user && applications.length > 0 && (
-                  <button 
-                    onClick={() => {
-                      if (selectedAppIds.length === applications.length) {
-                        setSelectedAppIds([]);
-                      } else {
-                        setSelectedAppIds(applications.map(a => a.id!).filter(Boolean));
-                      }
-                    }}
-                    className="flex items-center gap-2 px-4 py-2 rounded-lg bg-white/5 border border-white/10 text-[10px] font-bold uppercase tracking-widest text-white/60 hover:bg-white/10 transition-all"
+                <GlassCard className="p-8 space-y-8 border-neon-purple/20 bg-neon-purple/5">
+                  <div className="space-y-2">
+                    <h3 className="text-xl font-black uppercase tracking-tight italic flex items-center gap-2">
+                      <Cpu size={20} className="text-neon-purple" /> CV BUILDER
+                    </h3>
+                    <p className="text-[10px] uppercase font-bold tracking-widest text-white/30">Create a tailored version of your resume for this specific job.</p>
+                  </div>
+                  <NeonButton 
+                    variant="purple" 
+                    className="w-full py-6 text-md italic font-black uppercase tracking-tighter"
+                    onClick={() => handleGenerateCV(extractedJob)}
+                    isLoading={loadingCV}
                   >
-                    {selectedAppIds.length === applications.length ? <CheckSquare size={14} className="text-neon-purple" /> : <Square size={14} />}
-                    Select All
+                    <Download size={20} className="mr-2" /> Generate Tailored CV
+                  </NeonButton>
+                  <div className="pt-4 border-t border-white/5 text-center">
+                    <p className="text-[8px] font-mono text-white/20 uppercase tracking-[0.3em]">AI Resume Generator Ready</p>
+                  </div>
+                </GlassCard>
+              </div>
+            </div>
+          </div>
+        ) : null;
+      case 'cv_artifact':
+        return selectedCV && (
+          <CVArtifactView 
+            cv={selectedCV} 
+            onClose={() => setStep('cv_history')} 
+            onDelete={async () => {
+              if (selectedCV.id) {
+                await handleDeleteCV(selectedCV.id);
+                setSelectedCV(null);
+                setStep('cv_history');
+              }
+            }}
+            onRelink={(jobId) => {
+              const job = jobs.find(j => j.id === jobId);
+              if (job) {
+                setExtractedJob(job);
+                setStep('results');
+                setSelectedCV(null);
+              }
+            }}
+            onViewHistory={(jobId) => setViewingJobIdForArtifacts(jobId)}
+            isHistoryItem={true}
+          />
+        );
+      case 'cv_history':
+        return <CVHistoryView cvs={cvHistory} onSelect={(cv) => { setSelectedCV(cv); setStep('cv_artifact'); }} onDelete={handleDeleteCV} onViewJobHistory={(jobId) => setViewingJobIdForArtifacts(jobId)} />;
+      case 'cv_builder':
+        return <StandaloneCVBuilder user={user} profile={profile} onCVSaved={(cv) => { setCvHistory([cv, ...cvHistory]); setStep('cv_history'); }} />;
+      case 'tracking':
+        return (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-8">
+             <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-3xl font-black tracking-tighter uppercase italic leading-none">External <span className="text-neon-blue">Tracking</span></h2>
+                <p className="text-white/40 text-[10px] uppercase tracking-widest font-bold mt-1">Direct Postgres mirror of your application status.</p>
+              </div>
+            </div>
+            <GlassCard className="overflow-hidden border-white/5">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="bg-white/5 text-[10px] font-black uppercase tracking-widest text-white/30">
+                      <th className="p-4">ID</th>
+                      <th className="p-4">Job / Company</th>
+                      <th className="p-4">Status</th>
+                      <th className="p-4">Synced</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/5">
+                    {trackingRecords.length === 0 ? (
+                      <tr><td colSpan={4} className="p-12 text-center text-white/20 uppercase text-[10px] font-black">No external tracking data available.</td></tr>
+                    ) : (
+                      trackingRecords.map((rec) => (
+                        <tr key={rec.id} className="hover:bg-white/5 transition-colors">
+                          <td className="p-4 font-mono text-[10px] text-white/40">{rec.id}</td>
+                          <td className="p-4">
+                            <p className="text-xs font-bold uppercase">{rec.title}</p>
+                            <p className="text-[10px] text-neon-blue uppercase">{rec.company}</p>
+                          </td>
+                          <td className="p-4">
+                             <span className="px-2 py-0.5 rounded bg-white/10 text-[9px] font-black uppercase">{rec.status}</span>
+                          </td>
+                          <td className="p-4 text-[10px] text-white/20">{new Date(rec.captured_at).toLocaleDateString()}</td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </GlassCard>
+          </motion.div>
+        );
+      case 'inbox':
+        return (
+          <JobsListView 
+            jobs={jobs} 
+            filter={inboxFilter} 
+            onFilterChange={setInboxFilter} 
+            onViewJob={(job: any) => { setExtractedJob(job); setStep('results'); }} 
+            onUpdateStatus={handleUpdateJobStatus} 
+            onDeleteJob={handleDeleteJob} 
+            onBulkDelete={handleBulkDeleteJobs} 
+            onBulkUpdateStatus={handleBulkUpdateJobStatus} 
+            cvHistory={cvHistory} 
+            onViewJobArtifacts={(jobId: string) => setViewingJobIdForArtifacts(jobId)} 
+            onViewRaw={(job: any) => { setRawDataJob(job); setShowRawData(true); }}
+          />
+        );
+      case 'applications':
+        return (
+          <ApplicationsListView 
+            applications={applications} 
+            jobs={jobs}
+            onDeleteApplication={handleDeleteApplication} 
+            onBulkDelete={handleBulkDeleteApps}
+            setGeneratedApp={setGeneratedApp}
+            setExtractedJob={setExtractedJob}
+            setStep={setStep}
+            handleFollowUp={handleFollowUp}
+            onViewJobArtifacts={(jobId: string) => setViewingJobIdForArtifacts(jobId)}
+          />
+        );
+      case 'profile':
+        return <UserProfileView profile={profile} onSave={handleSaveProfile} onSyncWithCV={(text: string) => setProfile({ ...profile, cv_text: text })} />;
+      case 'database':
+        return (
+          <DatabaseManager 
+            jobs={jobs} 
+            cvHistory={cvHistory} 
+            updateJobStatus={handleUpdateJobStatus} 
+            handleDeleteJob={handleDeleteJob} 
+            setExtractedJob={setExtractedJob} 
+            setStep={setStep} 
+            setActiveGeneratedCV={setActiveGeneratedCV} 
+            onViewRaw={(job: any) => { setRawDataJob(job); setShowRawData(true); }}
+          />
+        );
+      case 'logs':
+        return <AILogs aiLogs={aiLogs} isAdmin={isAdmin} />;
+      case 'archive':
+        return (
+          <ExtractionAuditView 
+            jobs={jobs} 
+            onDelete={handleDeleteJob} 
+            onViewRaw={(job) => { setRawDataJob(job); setShowRawData(true); }} 
+          />
+        );
+      case 'history':
+        return <AIInteractionHistory history={chatHistory} onReRun={handleReRun} />;
+      default:
+        return null;
+    }
+  };
+
+  const LandingView = () => (
+    <motion.div 
+      key="landing"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="relative flex flex-col items-center text-center space-y-16 py-32"
+    >
+      <div className="absolute -top-40 left-1/2 -translate-x-1/2 w-[800px] h-[800px] bg-neon-blue/5 rounded-full blur-[120px] pointer-events-none" />
+      <div className="space-y-6 relative z-10">
+        <h2 className="text-8xl md:text-[10rem] font-black tracking-tighter leading-[0.8] uppercase italic">
+          EVOLVE YOUR <br />
+          <span className="text-transparent bg-clip-text bg-gradient-to-r from-neon-blue via-neon-purple to-neon-orange animate-gradient-x">CAREER</span>
+        </h2>
+        <p className="max-w-2xl mx-auto text-white/40 text-lg md:text-xl font-medium tracking-tight">
+          Professional application compiler and neural career management system.
+        </p>
+      </div>
+
+      <div className="flex flex-col sm:flex-row items-center justify-center gap-8 relative z-10">
+        <NeonButton 
+          variant="blue" 
+          className="px-16 py-6 text-2xl font-black italic tracking-tighter rounded-2xl shadow-[0_0_30px_rgba(0,243,255,0.1)] hover:scale-105 transition-all"
+          onClick={() => user ? setStep('dashboard') : handleSignIn()}
+          isLoading={authLoading}
+        >
+          {user ? 'INITIALIZE SYSTEM' : (authLoading ? 'ESTABLISHING LINK...' : 'CONNECT NEURAL LINK')} 
+          <ChevronRight size={28} className="ml-2" />
+        </NeonButton>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-8 w-full max-w-5xl relative z-10 px-6">
+        {[
+          { icon: <Search size={24}/>, title: "INTELLIGENCE", desc: "Automated job parameter extraction and alignment logic." },
+          { icon: <Cpu size={24}/>, title: "COMPILER", desc: "Deterministic professional artifact generation engine." },
+          { icon: <Database size={24}/>, title: "LOGISTICS", desc: "Consolidated application operations and lifecycle management." }
+        ].map((feat, i) => (
+          <GlassCard key={i} className="p-10 flex flex-col items-center gap-6 group hover:bg-white/5 border-white/5">
+            <div className="w-12 h-12 rounded-xl bg-white/5 flex items-center justify-center text-neon-blue group-hover:scale-110 group-hover:rotate-6 transition-transform">
+              {feat.icon}
+            </div>
+            <div className="space-y-2">
+               <h3 className="text-xl font-black tracking-tighter uppercase italic">{feat.title}</h3>
+               <p className="text-sm text-white/30">{feat.desc}</p>
+            </div>
+          </GlassCard>
+        ))}
+      </div>
+    </motion.div>
+  );
+
+  const JobArtifactHistoryOverlay = () => {
+    const job = jobs.find(j => j.id === viewingJobIdForArtifacts);
+    if (!job) return null;
+
+    return (
+      <div className="fixed inset-0 z-[70] bg-black/90 backdrop-blur-xl flex items-center justify-center p-6">
+        <GlassCard className="w-full max-w-4xl max-h-[80vh] overflow-hidden flex flex-col p-0 border-white/10">
+          <div className="p-6 border-b border-white/10 flex items-center justify-between bg-white/5">
+            <div className="flex items-center gap-4">
+              <div className="p-3 rounded-xl bg-neon-purple/10 border border-neon-purple/20 text-neon-purple">
+                <FileText size={24} />
+              </div>
+              <div>
+                <h3 className="text-xl font-black uppercase tracking-tight">Compiler Database</h3>
+                <p className="text-[10px] text-white/40 uppercase tracking-widest">
+                  {job.title} @ {job.company}
+                </p>
+              </div>
+            </div>
+            <button 
+              onClick={() => setViewingJobIdForArtifacts(null)}
+              className="p-2 rounded-lg hover:bg-white/10 text-white/40 transition-all hover:text-white"
+            >
+              <X size={20} />
+            </button>
+          </div>
+
+          <div className="flex-1 overflow-y-auto p-8 futuristic-scroll space-y-6">
+            <div className="flex items-center justify-between mb-4">
+               <h4 className="text-[10px] font-black uppercase tracking-[0.3em] text-white/30">Compiler Archive</h4>
+               <NeonButton 
+                 variant="purple" 
+                 className="!py-2 !px-4 !text-[10px]"
+                 onClick={() => handleGenerateCV(job)}
+                 isLoading={loadingCV}
+               >
+                 <Zap size={14} className="mr-2" /> COMPILE NEW VERSION
+               </NeonButton>
+            </div>
+
+            <div className="space-y-4">
+              {cvHistory.filter(h => h.job_id === viewingJobIdForArtifacts).length === 0 ? (
+                <div className="text-center py-12 border-2 border-dashed border-white/5 rounded-2xl">
+                  <p className="text-white/20 text-xs uppercase tracking-widest font-black">No artifacts generated for this node.</p>
+                </div>
+              ) : (
+                cvHistory
+                  .filter(h => h.job_id === viewingJobIdForArtifacts)
+                  .sort((a, b) => {
+                    const dateA = a.generated_at?.seconds ? a.generated_at.seconds : (a.generated_at instanceof Date ? a.generated_at.getTime() / 1000 : 0);
+                    const dateB = b.generated_at?.seconds ? b.generated_at.seconds : (b.generated_at instanceof Date ? b.generated_at.getTime() / 1000 : 0);
+                    return dateB - dateA;
+                  })
+                  .map((cv, idx) => (
+                    <div 
+                      key={cv.id} 
+                      className="p-4 rounded-2xl bg-white/5 border border-white/5 hover:border-neon-purple/30 transition-all flex items-center justify-between group"
+                    >
+                      <div className="flex items-center gap-4">
+                        <div className="w-10 h-10 rounded-lg bg-neon-purple/10 flex items-center justify-center text-neon-purple group-hover:scale-110 transition-transform">
+                          <Cpu size={18} />
+                        </div>
+                        <div>
+                          <p className="text-xs font-bold text-white/80">Version {cvHistory.filter(h => h.job_id === viewingJobIdForArtifacts).length - idx}</p>
+                          <p className="text-[10px] text-white/40 font-mono tracking-tighter">
+                            {cv.generated_at?.seconds ? new Date(cv.generated_at.seconds * 1000).toLocaleString() : 'Recent Encryption'}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex gap-2">
+                        <button 
+                          onClick={() => {
+                            setActiveGeneratedCV(cv);
+                            setViewingJobIdForArtifacts(null);
+                          }}
+                          className="px-4 py-2 rounded-lg bg-neon-purple/10 border border-neon-purple/20 text-neon-purple text-[10px] font-black uppercase tracking-widest hover:bg-neon-purple/20 transition-all"
+                        >
+                          View Output
+                        </button>
+                      </div>
+                    </div>
+                  ))
+              )}
+            </div>
+          </div>
+          
+          <div className="p-4 border-t border-white/5 bg-white/5 flex justify-end gap-3">
+             <button 
+              onClick={() => {
+                setExtractedJob(job);
+                setStep('results');
+                setActiveGeneratedCV(null);
+                setViewingJobIdForArtifacts(null);
+              }}
+              className="px-4 py-2 rounded-lg text-white/40 text-[10px] font-black uppercase tracking-widest hover:text-white transition-all"
+            >
+              Analyze Job
+            </button>
+            <button 
+              onClick={() => setViewingJobIdForArtifacts(null)}
+              className="px-4 py-2 rounded-lg bg-white/10 text-white/80 text-[10px] font-black uppercase tracking-widest hover:bg-white/20 transition-all"
+            >
+              Exit Storage
+            </button>
+          </div>
+        </GlassCard>
+      </div>
+    );
+  };
+
+  return (
+    <div className={cn(
+      "min-h-screen bg-[#050505] text-[#e0e0e0] font-sans selection:bg-neon-blue/30 selection:text-white antialiased transition-colors duration-300",
+      theme === 'light' && "bg-[#f8fafc] text-slate-900"
+    )}>
+      {/* Global Aesthetics */}
+      <div className="scanline" />
+
+      {!user || step === 'landing' ? (
+        <>
+          {/* Public Header */}
+          <header className="fixed top-0 inset-x-0 z-50 h-20 flex items-center px-8 backdrop-blur-md border-b border-white/5">
+            <div className="flex items-center gap-3 group cursor-pointer" onClick={() => setStep('landing')}>
+              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-neon-blue to-neon-purple p-[1px]">
+                <div className="w-full h-full rounded-[11px] bg-black flex items-center justify-center">
+                  <Terminal size={22} className="text-neon-blue group-hover:rotate-12 transition-transform" />
+                </div>
+              </div>
+              <h1 className="text-xl font-black tracking-tighter uppercase italic">CAREER<span className="text-neon-blue">OS</span></h1>
+            </div>
+            
+            <div className="ml-auto flex items-center gap-4">
+               <button 
+                onClick={handleSignIn}
+                disabled={authLoading}
+                className="px-6 py-2 rounded-xl bg-neon-blue/10 border border-neon-blue/30 text-neon-blue text-[11px] font-black uppercase tracking-widest hover:bg-neon-blue/20 transition-all active:scale-95"
+              >
+                {authLoading ? 'CONNECTING...' : 'INITIALIZE LINK'}
+              </button>
+            </div>
+          </header>
+
+          <main className="pt-20">
+            <AnimatePresence mode="wait">
+              {step === 'landing' && <LandingView />}
+            </AnimatePresence>
+          </main>
+        </>
+      ) : (
+        /* Enterprise Layout */
+        <div className="flex h-screen overflow-hidden">
+          {/* Sidebar Navigation */}
+          <aside className="w-64 border-r border-white/5 bg-[#0a0a0a] flex flex-col z-40 relative">
+            <div className="p-6 flex items-center gap-3 border-b border-white/5">
+              <div className="w-8 h-8 rounded-lg bg-neon-blue/10 flex items-center justify-center">
+                <Terminal size={18} className="text-neon-blue" />
+              </div>
+              <h1 className="text-sm font-black tracking-tighter uppercase">CAREER<span className="text-neon-blue">OS</span></h1>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-4 space-y-8 futuristic-scroll">
+              <div className="space-y-1">
+                <p className="px-3 pb-2 text-[10px] font-black tracking-[0.2em] text-white/20 uppercase">Core Systems</p>
+                {[
+                  { id: 'dashboard', label: 'Command Center', icon: <LayoutDashboard size={18} /> },
+                  { id: 'inbox', label: 'Operations', icon: <Inbox size={18} />, count: jobs.length },
+                ].map(item => (
+                  <button
+                    key={item.id}
+                    onClick={() => setStep(item.id as any)}
+                    className={cn(
+                      "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-[11px] font-bold uppercase tracking-wider transition-all",
+                      step === item.id 
+                        ? "bg-neon-blue/10 text-neon-blue border border-neon-blue/20" 
+                        : "text-white/40 hover:text-white/60 hover:bg-white/5"
+                    )}
+                  >
+                    {item.icon} {item.label}
+                    {item.count !== undefined && item.count > 0 && (
+                      <span className="ml-auto px-1.5 py-0.5 rounded bg-neon-blue/20 text-neon-blue text-[9px] font-black">
+                        {item.count}
+                      </span>
+                    )}
                   </button>
-                )}
+                ))}
               </div>
 
-              {/* Bulk Actions Bar */}
-              <AnimatePresence>
-                {selectedAppIds.length > 0 && (
-                  <motion.div 
-                    initial={{ opacity: 0, y: -20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: -20 }}
-                    className="p-4 rounded-xl bg-neon-purple/10 border border-neon-purple/30 flex items-center justify-between"
+              <div className="space-y-1">
+                <p className="px-3 pb-2 text-[10px] font-black tracking-[0.2em] text-white/20 uppercase">Intelligence</p>
+                {[
+                  { id: 'capture', label: 'Add New Job', icon: <Search size={18} /> },
+                  { id: 'cv_builder', label: 'CV Builder', icon: <PenTool size={18} /> },
+                  { id: 'profile', label: 'My Profile', icon: <User size={18} /> },
+                  { id: 'cv_history', label: 'Compiler Archive', icon: <Cpu size={18} />, count: cvHistory.length },
+                ].map(item => (
+                  <button
+                    key={item.id}
+                    onClick={() => setStep(item.id as any)}
+                    className={cn(
+                      "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-[11px] font-bold uppercase tracking-wider transition-all",
+                      step === item.id 
+                        ? "bg-neon-purple/10 text-neon-purple border border-neon-purple/20" 
+                        : "text-white/40 hover:text-white/60 hover:bg-white/5"
+                    )}
                   >
-                    <div className="flex items-center gap-4">
-                      <span className="text-xs font-bold text-neon-purple uppercase tracking-widest">
-                        {selectedAppIds.length} Items Selected
-                      </span>
-                      <div className="h-4 w-px bg-neon-purple/20" />
-                      <button 
-                        onClick={() => setSelectedAppIds([])}
-                        className="text-[10px] font-bold text-white/40 uppercase tracking-widest hover:text-white transition-colors"
-                      >
-                        Clear
-                      </button>
-                    </div>
-                    <div className="flex gap-3">
-                      <button 
-                        onClick={handleBulkDeleteApps}
-                        disabled={loading}
-                        className="flex items-center gap-2 px-4 py-1.5 rounded-lg bg-red-500/10 border border-red-500/30 text-[10px] font-bold uppercase tracking-widest text-red-400 hover:bg-red-500/20 transition-all"
-                      >
-                        <Trash2 size={14} /> Delete
-                      </button>
-                    </div>
-                  </motion.div>
-                )}
-              </AnimatePresence>
+                    {item.icon} {item.label}
+                  </button>
+                ))}
+              </div>
 
-              {!user ? (
-                <GlassCard className="py-20 text-center space-y-6">
-                  <div className="w-16 h-16 rounded-full bg-white/5 flex items-center justify-center mx-auto text-white/20">
-                    <ShieldCheck size={32} />
-                  </div>
-                  <div className="space-y-2">
-                    <h3 className="text-xl font-bold">Authentication Required</h3>
-                    <p className="text-white/40 max-w-xs mx-auto">Connect your neural link to access your application history.</p>
-                  </div>
-                  <NeonButton variant="blue" onClick={signIn}>Connect Now</NeonButton>
-                </GlassCard>
-              ) : applications.length === 0 ? (
-                <GlassCard className="py-20 text-center space-y-6">
-                  <div className="w-16 h-16 rounded-full bg-white/5 flex items-center justify-center mx-auto text-white/20">
-                    <History size={32} />
-                  </div>
-                  <div className="space-y-2">
-                    <h3 className="text-xl font-bold">No History</h3>
-                    <p className="text-white/40">You haven't saved any generated applications yet.</p>
-                  </div>
-                  <NeonButton variant="blue" onClick={() => setStep('inbox')}>Go to Inbox</NeonButton>
-                </GlassCard>
-              ) : (
-                <div className="space-y-4">
-                  {applications.map(app => {
-                    const job = jobs.find(j => j.id === app.job_id);
-                    return (
-                      <GlassCard 
-                        key={app.id} 
-                        className={cn(
-                          "flex flex-col md:flex-row gap-6 items-start md:items-center relative cursor-pointer group hover:border-neon-purple/50 transition-all",
-                          selectedAppIds.includes(app.id!) && "border-neon-purple/50 bg-neon-purple/5"
-                        )}
-                        onClick={() => {
-                          setGeneratedApp(app);
-                          if (job) setExtractedJob(job);
-                          setStep('results');
-                        }}
-                      >
-                        <div className="absolute top-1/2 -translate-y-1/2 left-4 z-10 hidden md:block">
-                          <button 
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              if (app.id) {
-                                setSelectedAppIds(prev => 
-                                  prev.includes(app.id!) 
-                                    ? prev.filter(id => id !== app.id) 
-                                    : [...prev, app.id!]
-                                );
-                              }
-                            }}
-                            className="text-neon-purple transition-all"
-                          >
-                            {selectedAppIds.includes(app.id!) ? <CheckSquare size={20} /> : <Square size={20} className="opacity-20 hover:opacity-100" />}
-                          </button>
-                        </div>
+              <div className="space-y-1">
+                <p className="px-3 pb-2 text-[10px] font-black tracking-[0.2em] text-white/20 uppercase">Archive</p>
+                {[
+                  { id: 'applications', label: 'My Applications', icon: <History size={18} />, count: applications.length },
+                  { id: 'tracking', label: 'Status Tracker', icon: <Activity size={18} />, count: trackingRecords.length },
+                  { id: 'database', label: 'Job Database', icon: <Database size={18} /> },
+                  { id: 'archive', label: 'Extraction Audit', icon: <ShieldCheck size={18} /> },
+                  { id: 'history', label: 'Activity Logs', icon: <MessageSquare size={18} />, count: chatHistory.length },
+                ].map(item => (
+                  <button
+                    key={item.id}
+                    onClick={() => setStep(item.id as any)}
+                    className={cn(
+                      "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-[11px] font-bold uppercase tracking-wider transition-all",
+                      step === item.id 
+                        ? "bg-neon-orange/10 text-neon-orange border border-neon-orange/20" 
+                        : "text-white/40 hover:text-white/60 hover:bg-white/5"
+                    )}
+                  >
+                    {item.icon} {item.label}
+                  </button>
+                ))}
+              </div>
+            </div>
 
-                        <div className="flex-1 space-y-2 md:pl-10">
-                          <div className="flex items-center gap-3">
-                            <div className="md:hidden">
-                              <button 
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  if (app.id) {
-                                    setSelectedAppIds(prev => 
-                                      prev.includes(app.id!) 
-                                        ? prev.filter(id => id !== app.id) 
-                                        : [...prev, app.id!]
-                                    );
-                                  }
-                                }}
-                                className="text-neon-purple transition-all"
-                              >
-                                {selectedAppIds.includes(app.id!) ? <CheckSquare size={18} /> : <Square size={18} className="opacity-20" />}
-                              </button>
-                            </div>
-                            <h3 className="font-bold text-lg group-hover:text-neon-purple transition-colors">{job?.title || 'Unknown Job'}</h3>
-                            {renderBadge(app.output_mode, 'purple')}
-                          </div>
-                          <p className="text-xs text-white/40 font-bold uppercase tracking-widest">{job?.company || 'Unknown Company'}</p>
-                          <div className="flex items-center gap-4 text-[10px] text-white/30">
-                            <span className="flex items-center gap-1"><Calendar size={12} /> {app.applied_at?.toDate().toLocaleDateString()}</span>
-                            <span className="flex items-center gap-1"><Target size={12} /> {app.generation_confidence} Confidence</span>
-                          </div>
-                        </div>
-                        
-                        <div className="flex gap-2 w-full md:w-auto">
-                          <NeonButton 
-                            variant="purple" 
-                            className="flex-1 md:flex-none !py-2 !px-4 !text-[10px]"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setGeneratedApp(app);
-                              if (job) setExtractedJob(job);
-                              setStep('results');
-                            }}
-                          >
-                            View Content
-                          </NeonButton>
-                          <button 
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              if (job) handleFollowUp(job, app);
-                            }}
-                            className="p-2 rounded-lg hover:bg-neon-purple/10 text-white/20 hover:text-neon-purple transition-all"
-                            title="Generate Follow-up"
-                          >
-                            <Mail size={18} />
-                          </button>
-                          <button 
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              app.id && handleDeleteApplication(app.id);
-                            }}
-                            className="p-2 rounded-lg hover:bg-red-500/10 text-white/20 hover:text-red-400 transition-all"
-                          >
-                            <Trash2 size={18} />
-                          </button>
-                        </div>
-                      </GlassCard>
-                    );
-                  })}
+            <div className="p-4 border-t border-white/5 mt-auto">
+              <button 
+                onClick={() => signOut()}
+                className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-[10px] font-black uppercase tracking-widest text-red-400 hover:bg-red-400/5 transition-all"
+              >
+                <LogOut size={16} /> Disconnect Link
+              </button>
+            </div>
+          </aside>
+
+          <div className="flex-1 flex flex-col min-w-0 bg-[#050505]">
+            <header className="h-16 border-b border-white/5 px-8 flex items-center justify-between backdrop-blur-xl z-30">
+              <div className="flex items-center gap-4">
+                <div className="flex items-center gap-2 text-[10px] uppercase tracking-widest font-black text-white/30">
+                  <span className="hover:text-neon-blue cursor-pointer" onClick={() => setStep('dashboard')}>COMMAND</span>
+                  <ChevronRight size={12} />
+                  <span className="text-white/70">{step.replace('_', ' ').toUpperCase()}</span>
                 </div>
-              )}
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </main>
+              </div>
 
+              <div className="flex items-center gap-6">
+                <div className="flex items-center gap-3 px-4 py-1.5 rounded-full bg-white/5 border border-white/10">
+                  <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
+                  <span className="text-[10px] font-black uppercase tracking-widest text-white/60 line-clamp-1">{user?.displayName}</span>
+                </div>
+                
+                <div className="flex items-center gap-2">
+                  <button 
+                    onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+                    className="p-2 rounded-lg hover:bg-white/5 text-white/40 hover:text-neon-blue transition-colors"
+                  >
+                    {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
+                  </button>
+                  <button className="p-2 rounded-lg hover:bg-white/5 text-white/40 relative">
+                    <Bell size={18} />
+                    <span className="absolute top-2 right-2 w-1.5 h-1.5 bg-neon-orange rounded-full border border-black" />
+                  </button>
+                </div>
+              </div>
+            </header>
+
+            <div className="flex-1 overflow-y-auto p-8 futuristic-scroll">
+              <AnimatePresence mode="wait">
+                {renderAppView()}
+              </AnimatePresence>
+            </div>
+          </div>
+        </div>
+      )}
       <AnimatePresence>
+        {activeGeneratedCV && (
+          <CVArtifactView 
+            cv={activeGeneratedCV} 
+            onClose={() => setActiveGeneratedCV(null)} 
+            onDelete={async () => {
+              if (activeGeneratedCV.id) {
+                await deleteGeneratedCV(activeGeneratedCV.id);
+                setActiveGeneratedCV(null);
+              }
+            }}
+            onRelink={(jobId) => {
+              const job = jobs.find(j => j.id === jobId);
+              if (job) {
+                setExtractedJob(job);
+                setStep('results');
+                setActiveGeneratedCV(null);
+              }
+            }}
+            onViewHistory={(jobId) => setViewingJobIdForArtifacts(jobId)}
+          />
+        )}
+        {viewingJobIdForArtifacts && (
+          <JobArtifactHistoryOverlay />
+        )}
         {showRawData && rawDataJob && (
           <RawDataViewer 
             job={rawDataJob} 
@@ -2392,7 +1993,6 @@ function AppContent() {
               if (updatedJob.id) {
                 await updateJob(updatedJob.id, updatedJob);
                 setRawDataJob(updatedJob);
-                // If the current extractedJob is the one being edited, update it too
                 if (extractedJob?.id === updatedJob.id) {
                   setExtractedJob(updatedJob);
                 }
@@ -2401,19 +2001,413 @@ function AppContent() {
           />
         )}
       </AnimatePresence>
-
-      {/* Footer Decoration */}
-      <footer className="mt-20 py-10 border-t border-white/5 text-center space-y-4">
-        <div className="flex justify-center gap-8 opacity-20">
-          <Cpu size={24} />
-          <Zap size={24} />
-          <ShieldCheck size={24} />
-          <Target size={24} />
-        </div>
-        <p className="text-[10px] font-mono text-white/20 uppercase tracking-[0.5em]">
-          Vision 2060 Protocol // Secure Neural Link // AI-Driven Career Synthesis
-        </p>
-      </footer>
     </div>
   );
 }
+
+// Sub-components
+
+const JobsListView = ({ 
+  jobs, 
+  filter, 
+  onFilterChange, 
+  onViewJob, 
+  onUpdateStatus, 
+  onDeleteJob, 
+  onBulkDelete, 
+  onBulkUpdateStatus, 
+  cvHistory, 
+  onViewJobArtifacts,
+  onViewRaw
+}: any) => {
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const filteredJobs = jobs.filter((j: any) => filter === 'all' || j.status === filter);
+
+  return (
+    <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="space-y-8">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+          <h2 className="text-3xl font-black tracking-tighter uppercase leading-none">Manage <span className="text-neon-blue">Your Jobs</span></h2>
+          <p className="text-white/40 text-[10px] uppercase tracking-widest font-bold mt-1">Review and organize all jobs you've captured.</p>
+        </div>
+        <div className="flex flex-wrap gap-3">
+          <div className="flex p-1 bg-white/5 border border-white/10 rounded-lg">
+            {['all', JobStatus.saved, JobStatus.applied, JobStatus.follow_up].map(f => (
+              <button
+                key={f}
+                onClick={() => onFilterChange(f as any)}
+                className={`px-3 py-1.5 rounded-md text-[10px] font-bold uppercase tracking-widest transition-all ${filter === f ? 'bg-neon-blue/20 text-neon-blue' : 'text-white/40 hover:text-white/60'}`}
+              >
+                {f}
+              </button>
+            ))}
+          </div>
+          {selectedIds.length > 0 && (
+            <div className="flex gap-2">
+              <button 
+                onClick={() => onBulkUpdateStatus(selectedIds, JobStatus.applied)}
+                className="px-4 py-2 rounded-lg bg-neon-blue/10 border border-neon-blue/30 text-[10px] font-bold uppercase tracking-widest text-neon-blue"
+              >
+                Applied
+              </button>
+              <button 
+                onClick={() => onBulkDelete(selectedIds)}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-red-500/10 border border-red-500/30 text-[10px] font-bold uppercase tracking-widest text-red-400"
+              >
+                <Trash2 size={14} /> Delete
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {filteredJobs.length === 0 ? (
+        <GlassCard className="py-20 text-center space-y-6 border-dashed border-white/10">
+          <div className="w-16 h-16 rounded-full bg-white/5 flex items-center justify-center mx-auto text-white/20">
+            <Inbox size={32} />
+          </div>
+          <div className="space-y-2">
+            <h3 className="text-xl font-bold uppercase tracking-tight">No Jobs Found</h3>
+            <p className="text-white/40 text-xs">You haven't added any job opportunities yet.</p>
+          </div>
+        </GlassCard>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {filteredJobs.map((job: any) => (
+            <GlassCard 
+              key={job.id} 
+              className={cn(
+                "group transition-all flex flex-col relative border-white/5 hover:border-white/20",
+                selectedIds.includes(job.id!) && "border-neon-blue/30 bg-neon-blue/5"
+              )}
+            >
+              <div className="flex justify-between items-start mb-4">
+                <div className="flex gap-3">
+                  <button 
+                    onClick={() => setSelectedIds(prev => prev.includes(job.id) ? prev.filter(id => id !== job.id) : [...prev, job.id])}
+                    className="text-white/20 hover:text-neon-blue"
+                  >
+                    {selectedIds.includes(job.id) ? <CheckSquare size={18} className="text-neon-blue" /> : <Square size={18} />}
+                  </button>
+                  <div className="space-y-1">
+                    <h3 className="font-bold text-sm leading-tight uppercase tracking-tight group-hover:text-neon-blue transition-colors">{job.title}</h3>
+                    <p className="text-[10px] text-white/40 font-bold uppercase tracking-widest">{job.company}</p>
+                  </div>
+                </div>
+                <button onClick={() => onDeleteJob(job.id)} className="p-1.5 opacity-0 group-hover:opacity-100 text-white/20 hover:text-red-400 transition-all">
+                  <Trash2 size={14} />
+                </button>
+              </div>
+              
+              <div className="space-y-3 flex-1">
+                <div className="flex items-center gap-2 text-[10px] text-white/30 uppercase tracking-widest">
+                  <MapPin size={10} /> {job.location || 'Remote'}
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <select 
+                    className={cn(
+                      "px-2 py-1 rounded bg-black/40 border text-[9px] font-black uppercase tracking-widest outline-none",
+                      job.status === JobStatus.applied ? "border-green-500/30 text-green-400" : "border-white/10 text-white/50"
+                    )}
+                    value={job.status}
+                    onChange={(e) => onUpdateStatus(job.id, e.target.value as JobStatus)}
+                  >
+                    {Object.values(JobStatus).map(s => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                </div>
+                <p className="text-[11px] text-white/50 line-clamp-2 italic leading-relaxed">{job.summary}</p>
+              </div>
+
+              <div className="mt-6 pt-4 border-t border-white/5 flex gap-2">
+                <NeonButton variant="blue" className="flex-1 !py-2 !text-[9px]" onClick={() => onViewJob(job)}>Analyze</NeonButton>
+                <NeonButton variant="purple" className="flex-1 !py-2 !text-[9px]" onClick={() => onViewJobArtifacts(job.id)}>CVs ({cvHistory.filter((cv: any) => cv.job_id === job.id).length})</NeonButton>
+                <button 
+                  onClick={() => onViewRaw(job)}
+                  className="p-2 rounded bg-white/5 text-white/40 hover:text-neon-blue transition-all"
+                  title="Edit Raw Data"
+                >
+                  <Settings size={14} />
+                </button>
+              </div>
+            </GlassCard>
+          ))}
+        </div>
+      )}
+    </motion.div>
+  );
+};
+
+const ApplicationsListView = ({ applications, jobs, onDeleteApplication, setGeneratedApp, setExtractedJob, setStep, handleFollowUp }: any) => {
+  return (
+    <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="space-y-8">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-3xl font-black tracking-tighter uppercase leading-none italic">My <span className="text-neon-purple">Applications</span></h2>
+          <p className="text-white/40 text-[10px] uppercase tracking-widest font-bold mt-1">Monitor all your submitted applications and materials.</p>
+        </div>
+      </div>
+
+      {applications.length === 0 ? (
+        <GlassCard className="py-20 text-center space-y-6 border-dashed border-white/10">
+          <History size={48} className="mx-auto text-white/10" />
+          <h3 className="text-xl font-bold uppercase text-white/30 tracking-tight">No active history</h3>
+        </GlassCard>
+      ) : (
+        <div className="space-y-4">
+          {applications.map((app: any) => {
+            const job = jobs.find((j: any) => j.id === app.job_id);
+            return (
+              <GlassCard key={app.id} className="flex flex-col md:flex-row gap-6 items-center border-white/5 hover:border-neon-purple/50">
+                <div className="flex-1 space-y-2">
+                  <div className="flex items-center gap-3">
+                    <h3 className="font-bold text-lg uppercase tracking-tight">{job?.title || 'Unknown Job'}</h3>
+                    <span className="px-2 py-0.5 rounded bg-neon-purple/10 border border-neon-purple/30 text-neon-purple text-[8px] font-black uppercase tracking-widest">{app.output_mode}</span>
+                  </div>
+                  <p className="text-xs text-white/40 font-bold uppercase tracking-widest italic">{job?.company || 'Unknown'}</p>
+                  <p className="text-[10px] text-white/30 font-mono tracking-tighter lowercase">ID: {app.id}</p>
+                </div>
+                <div className="flex gap-2">
+                  <NeonButton variant="purple" className="!py-2 !px-4 !text-[10px]" onClick={() => {
+                    setGeneratedApp(app);
+                    if (job) setExtractedJob(job);
+                    setStep('results');
+                  }}>View content</NeonButton>
+                  {job && (
+                    <button onClick={() => handleFollowUp(job, app)} className="p-2 rounded-lg border border-white/10 text-white/40 hover:text-neon-purple transition-all"><Mail size={16} /></button>
+                  )}
+                  <button onClick={() => onDeleteApplication(app.id)} className="p-2 rounded-lg border border-white/10 text-white/40 hover:text-red-400 transition-all"><Trash2 size={16} /></button>
+                </div>
+              </GlassCard>
+            );
+          })}
+        </div>
+      )}
+    </motion.div>
+  );
+};
+
+const UserProfileView = ({ profile, onSave, onSyncWithCV }: any) => {
+  const [localProfile, setLocalProfile] = useState(profile);
+  const [newSkill, setNewSkill] = useState('');
+
+  const addSkill = () => {
+    if (newSkill && !localProfile.skills.includes(newSkill)) {
+      setLocalProfile({ ...localProfile, skills: [...localProfile.skills, newSkill] });
+      setNewSkill('');
+    }
+  };
+
+  return (
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="max-w-4xl mx-auto space-y-12">
+      <div className="text-center space-y-2">
+        <h2 className="text-5xl font-black tracking-tighter uppercase italic">My <span className="text-neon-blue">Profile</span></h2>
+        <p className="text-white/40 text-[10px] uppercase tracking-[0.4em] font-black">Manage your professional identity and resume data.</p>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-12">
+        <div className="space-y-8">
+          <GlassCard className="p-8 space-y-6">
+            <h3 className="text-sm font-black uppercase tracking-widest text-neon-blue border-b border-white/5 pb-2">Core Parameters</h3>
+            <div className="grid grid-cols-1 gap-6">
+              <FuturisticInput label="Full Name" value={localProfile.full_name} onChange={e => setLocalProfile({...localProfile, full_name: e.target.value})} />
+              <div className="grid grid-cols-2 gap-6">
+                <FuturisticInput label="Primary Email" value={localProfile.email} onChange={e => setLocalProfile({...localProfile, email: e.target.value})} />
+                <FuturisticInput label="Location" value={localProfile.location} onChange={e => setLocalProfile({...localProfile, location: e.target.value})} />
+              </div>
+              <FuturisticInput label="Years of Experience" type="number" value={localProfile.years_of_experience} onChange={e => setLocalProfile({...localProfile, years_of_experience: e.target.value})} />
+            </div>
+          </GlassCard>
+
+          <GlassCard className="p-8 space-y-6">
+            <h3 className="text-sm font-black uppercase tracking-widest text-neon-purple border-b border-white/5 pb-2">Technical Skillsets</h3>
+            <div className="flex gap-3">
+              <input 
+                type="text" 
+                className="flex-1 bg-white/5 border border-white/10 rounded-lg px-4 py-2 text-sm focus:border-neon-purple outline-none transition-all"
+                placeholder="Add skill (e.g. React, Python)"
+                value={newSkill}
+                onChange={e => setNewSkill(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && addSkill()}
+              />
+              <NeonButton onClick={addSkill} variant="purple">Add</NeonButton>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {localProfile.skills.map((s: string) => (
+                <span key={s} className="px-3 py-1.5 rounded-full bg-neon-purple/10 border border-neon-purple/20 text-neon-purple text-[10px] font-bold uppercase flex items-center gap-2">
+                  {s}
+                  <X size={10} className="cursor-pointer hover:text-white" onClick={() => setLocalProfile({...localProfile, skills: localProfile.skills.filter((sk: string) => sk !== s)})} />
+                </span>
+              ))}
+            </div>
+          </GlassCard>
+        </div>
+
+        <div className="space-y-8">
+          <GlassCard className="p-8 space-y-6 h-full flex flex-col">
+            <h3 className="text-sm font-black uppercase tracking-widest text-neon-orange border-b border-white/5 pb-2">Paste Your Resume</h3>
+            <textarea 
+              className="flex-1 w-full bg-white/5 border border-white/10 rounded-xl p-4 text-xs font-mono text-white/70 focus:border-neon-orange outline-none transition-all resize-none min-h-[400px]"
+              placeholder="Paste your current CV text here for the AI to learn from..."
+              value={localProfile.cv_text}
+              onChange={e => setLocalProfile({...localProfile, cv_text: e.target.value})}
+            />
+            <div className="pt-4 flex justify-between items-center">
+              <p className="text-[9px] text-white/30 uppercase tracking-widest font-black">Characters: {localProfile.cv_text.length}</p>
+              <button 
+                onClick={() => onSyncWithCV(localProfile.cv_text)}
+                className="text-[10px] font-black text-neon-orange uppercase tracking-widest hover:underline"
+              >
+                Auto-Fill From Resume
+              </button>
+            </div>
+          </GlassCard>
+        </div>
+      </div>
+
+      <div className="flex justify-center pt-8">
+        <NeonButton 
+          variant="blue" 
+          className="px-12 py-4 text-xl font-black italic tracking-tighter"
+          onClick={() => onSave(localProfile)}
+        >
+          Save My Profile
+        </NeonButton>
+      </div>
+    </motion.div>
+  );
+};
+
+const DatabaseManager = ({ jobs, cvHistory, updateJobStatus, handleDeleteJob, setExtractedJob, setStep, setActiveGeneratedCV, onViewRaw }: any) => {
+  return (
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-8">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-3xl font-black tracking-tight uppercase italic leading-none">Job <span className="text-neon-blue">Database</span></h2>
+          <p className="text-white/40 text-[10px] uppercase tracking-widest font-bold mt-1">Full historical log of all jobs and their details.</p>
+        </div>
+      </div>
+
+      <GlassCard className="overflow-hidden border-white/5">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left border-collapse">
+            <thead>
+              <tr className="bg-white/5 text-[10px] font-black uppercase tracking-widest text-white/30">
+                <th className="p-4">Job ID</th>
+                <th className="p-4">Job Title</th>
+                <th className="p-4">Status</th>
+                <th className="p-4">Action</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-white/5">
+              {jobs.map((job: any) => (
+                <tr key={job.id} className="hover:bg-white/5 transition-colors group">
+                  <td className="p-4">
+                    <p className="text-sm font-bold uppercase tracking-tight">{job.title}</p>
+                    <p className="text-[10px] text-white/40 font-mono lower">{job.id}</p>
+                  </td>
+                  <td className="p-4">
+                    <p className="text-xs font-black text-neon-blue uppercase italic">{job.company}</p>
+                    <p className="text-[9px] text-white/30 uppercase tracking-widest">{job.location || 'Remote'}</p>
+                  </td>
+                  <td className="p-4">
+                    <select 
+                      className="bg-transparent border border-white/10 rounded px-2 py-1 text-[9px] font-black uppercase text-white/60 focus:border-neon-blue outline-none"
+                      value={job.status}
+                      onChange={(e) => updateJobStatus(job.id, e.target.value as any)}
+                    >
+                      {Object.values(JobStatus).map(s => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                  </td>
+                  <td className="p-4">
+                    <div className="flex gap-2">
+                       {cvHistory.filter((cv: any) => cv.job_id === job.id).map((cv: any, i: number) => (
+                         <button 
+                           key={cv.id} 
+                           onClick={() => setActiveGeneratedCV(cv)}
+                           className="w-6 h-6 rounded bg-neon-purple/20 text-neon-purple flex items-center justify-center text-[9px] font-black border border-neon-purple/30 hover:bg-neon-purple hover:text-black transition-all"
+                         >
+                           {i + 1}
+                         </button>
+                       ))}
+                    </div>
+                  </td>
+                  <td className="p-4">
+                    <div className="flex items-center gap-2">
+                      <button onClick={() => { setExtractedJob(job); setStep('results'); }} className="p-2 rounded bg-white/5 text-white/40 hover:text-neon-blue transition-all" title="View Hub"><Eye size={14} /></button>
+                      <button 
+                        onClick={() => onViewRaw(job)}
+                        className="p-2 rounded bg-white/5 text-white/40 hover:text-neon-blue transition-all"
+                        title="Edit Schema"
+                      >
+                        <Settings size={14} />
+                      </button>
+                      <button onClick={() => handleDeleteJob(job.id)} className="p-2 rounded bg-white/5 text-white/40 hover:text-red-400 transition-all" title="Delete"><Trash2 size={14} /></button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </GlassCard>
+    </motion.div>
+  );
+};
+
+const AILogs = ({ aiLogs, isAdmin }: any) => {
+  if (!isAdmin) return null;
+  return (
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-8">
+      <h2 className="text-3xl font-black tracking-tighter uppercase italic leading-none">Activity <span className="text-neon-blue">Logs</span></h2>
+      <GlassCard className="overflow-hidden border-white/5">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left border-collapse text-[11px]">
+            <thead>
+               <tr className="bg-white/5 text-[9px] font-black uppercase tracking-[0.2em] text-white/30">
+                 <th className="p-4">Timestamp</th>
+                 <th className="p-4">Operation</th>
+                 <th className="p-4">Model</th>
+                 <th className="p-4">Latency</th>
+                 <th className="p-4">Resources</th>
+               </tr>
+            </thead>
+            <tbody className="divide-y divide-white/5 font-mono">
+              {aiLogs.map((log: any) => (
+                <tr key={log.id} className="hover:bg-white/5 transition-colors">
+                  <td className="p-4 text-white/40">{log.timestamp?.toDate().toLocaleString()}</td>
+                  <td className="p-4 font-black uppercase text-neon-blue">{log.action}</td>
+                  <td className="p-4 text-white/60">{log.model}</td>
+                  <td className="p-4 text-white/40">{log.latency_ms}ms</td>
+                  <td className="p-4 text-white/30">{log.tokens_input}/{log.tokens_output}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </GlassCard>
+    </motion.div>
+  );
+};
+
+const AIInteractionHistory = ({ history, onReRun }: any) => {
+  return (
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+      <ChatHistoryView 
+        history={history} 
+        onReRun={onReRun}
+        onDelete={deleteChatHistory}
+      />
+    </motion.div>
+  );
+};
+
+
+
+
+
+
+
+
+
+
+

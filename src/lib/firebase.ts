@@ -1,6 +1,6 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
-import { getFirestore, collection, doc, setDoc, getDoc, getDocs, query, where, onSnapshot, updateDoc, deleteDoc, Timestamp, getDocFromServer, writeBatch } from 'firebase/firestore';
+import { getFirestore, collection, doc, setDoc, getDoc, getDocs, query, where, onSnapshot, updateDoc, deleteDoc, Timestamp, getDocFromServer, writeBatch, addDoc, orderBy } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 import { ExtractedJob, JobStatus } from '../types';
 import { trackingService } from '../services/trackingService';
@@ -132,35 +132,54 @@ export const saveJob = async (uid: string, job: any) => {
     // caused by extraneous fields from AI hallucination
     const sanitizedJob = {
       uid,
-      title: job.title || 'Untitled Job',
-      company: job.company || 'Unknown Company',
-      summary: job.summary || null,
-      location: job.location || null,
-      employment_type: job.employment_type || 'unknown',
-      remote_policy: job.remote_policy || 'unknown',
-      application_url: job.application_url || null,
-      deadline: job.deadline || null,
+      title: job.title ?? null,
+      company: job.company ?? null,
+      summary: job.summary ?? null,
+      location: job.location ?? null,
+      employment_type: job.employment_type ?? null,
+      remote_policy: job.remote_policy ?? null,
+      application_url: job.application_url ?? null,
+      deadline: job.deadline ?? null,
       source_type: job.source_type || 'text',
-      source_label: job.source_label || null,
-      source_url: job.source_url || null,
-      raw_content: job.raw_content || null,
+      source_label: job.source_label ?? null,
+      source_url: job.source_url ?? null,
+      raw_content: job.raw_content ?? null,
       captured_at: Timestamp.now(),
       status: job.status || 'saved',
       requirements: job.requirements || [],
       required_skills: job.required_skills || [],
       preferred_skills: job.preferred_skills || [],
-      experience_years_required: job.experience_years_required || null,
-      seniority: job.seniority || 'unknown',
-      application_method: job.application_method || 'unknown',
-      application_email: job.application_email || null,
-      salary_info: job.salary_info || null,
-      raw_excerpt: job.raw_excerpt || null,
+      experience_years_required: job.experience_years_required ?? null,
+      seniority: job.seniority ?? null,
+      application_method: job.application_method ?? null,
+      application_email: job.application_email ?? null,
+      salary_info: job.salary_info ?? null,
+      raw_excerpt: job.raw_excerpt ?? null,
       missing_fields: job.missing_fields || [],
-      extraction_confidence: job.extraction_confidence || 'medium',
-      postgres_id: job.postgres_id || null
+      extraction_confidence: job.extraction_confidence ?? null,
+      postgres_id: job.postgres_id ?? null,
+      model_output: job.model_output ?? null
     };
 
     await setDoc(jobRef, sanitizedJob);
+
+    // Sync with Tracking Backend (Postgres or Local)
+    try {
+      await trackingService.createJob({
+        uid,
+        title: sanitizedJob.title,
+        company: sanitizedJob.company,
+        status: sanitizedJob.status,
+        firestore_id: jobRef.id,
+        extra_data: { 
+          location: sanitizedJob.location,
+          source_url: sanitizedJob.source_url
+        }
+      });
+    } catch (syncError) {
+      console.error("Failed to sync job to tracking backend:", syncError);
+    }
+
     return jobRef.id;
   } catch (error) {
     handleFirestoreError(error, OperationType.CREATE, path);
@@ -280,5 +299,88 @@ export const bulkDeleteApplications = async (appIds: string[]) => {
     await batch.commit();
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, 'applications/bulk');
+  }
+};
+
+export const saveChatHistory = async (uid: string, prompt: string, response: any, type: string, metadata: any = {}) => {
+  const path = 'chat_history';
+  try {
+    await addDoc(collection(db, path), {
+      uid,
+      prompt,
+      response,
+      type,
+      metadata,
+      timestamp: Timestamp.now()
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.CREATE, path);
+  }
+};
+
+export const getChatHistory = (uid: string, callback: (history: any[]) => void) => {
+  const path = 'chat_history';
+  const q = query(
+    collection(db, path),
+    where('uid', '==', uid),
+    orderBy('timestamp', 'desc')
+  );
+
+  return onSnapshot(q, (snapshot) => {
+    const history = snapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data()
+    }));
+    callback(history);
+  }, (error) => {
+    handleFirestoreError(error, OperationType.GET, path);
+  });
+};
+
+export const deleteChatHistory = async (id: string) => {
+  const path = `chat_history/${id}`;
+  try {
+    await deleteDoc(doc(db, 'chat_history', id));
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, path);
+  }
+};
+
+export const saveGeneratedCV = async (uid: string, cv: any) => {
+  const path = 'cv_history';
+  try {
+    const cvRef = doc(collection(db, 'cv_history'));
+    await setDoc(cvRef, {
+      ...cv,
+      uid,
+      generated_at: Timestamp.now()
+    });
+    return cvRef.id;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.CREATE, path);
+  }
+};
+
+export const getGeneratedCVs = (uid: string, callback: (cvs: any[]) => void) => {
+  const path = 'cv_history';
+  const q = query(
+    collection(db, path),
+    where('uid', '==', uid),
+    orderBy('generated_at', 'desc')
+  );
+
+  return onSnapshot(q, (snapshot) => {
+    callback(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+  }, (error) => {
+    handleFirestoreError(error, OperationType.LIST, path);
+  });
+};
+
+export const deleteGeneratedCV = async (id: string) => {
+  const path = `cv_history/${id}`;
+  try {
+    await deleteDoc(doc(db, 'cv_history', id));
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, path);
   }
 };

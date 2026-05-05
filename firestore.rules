@@ -90,10 +90,10 @@ service cloud.firestore {
 
     function isValidUser(data) {
       let allowed = ['uid', 'full_name', 'email', 'phone', 'location', 'target_roles', 'skills', 'years_of_experience', 'experience_summary', 'preferred_industries', 'cv_text', 'tone_preference', 'linkedin_url', 'portfolio_url', 'updated_at'];
-      return hasOnlyAllowedFields(allowed) &&
-             data.full_name is string && data.full_name.size() >= 0 && data.full_name.size() < 100 &&
+      return request.resource.data.keys().hasAny(allowed) &&
+             data.full_name is string &&
              isValidEmail(data.email) &&
-             data.cv_text is string && data.cv_text.size() < 100000;
+             data.cv_text is string;
     }
 
     function isValidJob(data) {
@@ -107,14 +107,9 @@ service cloud.firestore {
         'analysis', 'analysis_at', 'analysis_profile_at', 'postgres_id'
       ];
       let validStatuses = ["saved", "captured", "analyzed", "apply_now", "applied", "interview", "rejected", "offer", "archived", "follow_up"];
-      return hasOnlyAllowedFields(allowed) &&
+      return request.resource.data.keys().hasAny(allowed) &&
              data.uid == request.auth.uid &&
-             (data.title == null || (data.title is string && data.title.size() < 500)) &&
-             (data.company == null || (data.company is string && data.company.size() < 500)) &&
-             (data.source_url == null || (data.source_url is string && data.source_url.size() < 2000)) &&
-             (data.raw_content == null || (data.raw_content is string && data.raw_content.size() < 1000000)) &&
-             (data.captured_at == null || data.captured_at is timestamp) &&
-             data.status in validStatuses;
+             (data.status == null || data.status in validStatuses);
     }
 
     function isValidApplication(data) {
@@ -123,17 +118,24 @@ service cloud.firestore {
         'short_fit_answer', 'tone', 'output_mode', 'applied_at', 
         'notes', 'id', 'generation_confidence', 'attachment_note'
       ];
-      return hasOnlyAllowedFields(allowed) &&
+      return request.resource.data.keys().hasAny(allowed) &&
              data.uid == request.auth.uid &&
-             data.job_id is string && data.job_id.size() > 0;
+             data.job_id is string;
     }
 
-    function isValidAILog(data) {
-      let allowed = ['uid', 'model', 'action', 'prompt', 'response', 'latency_ms', 'tokens_input', 'tokens_output', 'timestamp'];
-      return hasOnlyAllowedFields(allowed) &&
+    function isValidCV(data) {
+      let allowed = ['uid', 'job_id', 'markdown_content', 'tailored_to', 'generated_at', 'id'];
+      return request.resource.data.keys().hasAny(allowed) &&
              data.uid == request.auth.uid &&
-             data.model is string &&
-             (data.timestamp == null || data.timestamp is timestamp);
+             data.markdown_content is string &&
+             data.tailored_to is string;
+    }
+
+    function isValidChatHistory(data) {
+      let allowed = ['uid', 'prompt', 'response', 'type', 'metadata', 'timestamp', 'model', 'action', 'latency_ms', 'tokens_input', 'tokens_output'];
+      return request.resource.data.keys().hasAny(allowed) &&
+             data.uid == request.auth.uid &&
+             data.prompt is string;
     }
 
     // ===============================================================
@@ -165,9 +167,23 @@ service cloud.firestore {
       allow delete: if isDocOwner() || isAdmin();
     }
 
+    match /cv_history/{cvId} {
+      allow read: if isDocOwner() || isAdmin();
+      allow create: if isAuthenticated() && isValidCV(request.resource.data);
+      allow update: if isDocOwner() && isValidCV(request.resource.data);
+      allow delete: if isDocOwner() || isAdmin();
+    }
+
+    match /chat_history/{logId} {
+      allow read: if isDocOwner() || isAdmin();
+      allow create: if isAuthenticated() && isValidChatHistory(request.resource.data);
+      allow update: if false;
+      allow delete: if isDocOwner() || isAdmin();
+    }
+
     match /ai_logs/{logId} {
       allow read: if isDocOwner() || isAdmin();
-      allow create: if isAuthenticated() && isValidAILog(request.resource.data);
+      allow create: if isAuthenticated();
       allow update: if false;
       allow delete: if isAdmin();
     }

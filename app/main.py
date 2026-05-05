@@ -66,11 +66,11 @@ async def http_exception_handler(request: Request, exc: HTTPException):
     )
 
 # Health check
-@app.get("/app-backend-v1/health")
+@app.get("/backend-v2060/health")
 async def health_check():
     return {"status": "ok", "service": "job-capture-backend"}
 
 # Include routers
-app.include_router(jobs.router, prefix="/app-backend-v1", tags=["Jobs"])
-app.include_router(profile.router, prefix="/app-backend-v1/profile", tags=["Profile"])
-app.include_router(tracking.router, prefix="/app-backend-v1/tracking", tags=["Tracking"])
+app.include_router(jobs.router, prefix="/backend-v2060", tags=["Jobs"])
+app.include_router(profile.router, prefix="/backend-v2060/profile", tags=["Profile"])
+app.include_router(tracking.router, prefix="/backend-v2060/tracking", tags=["Tracking"])

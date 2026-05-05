@@ -149,52 +149,45 @@ class AIService:
             processed_content = processed_content[:50000]
 
         prompt = f"""
-        TASK: Extract job details from the provided {source_type}.
-        REQUEST_ID: {request_id}
-        
-        INSTRUCTIONS:
-        1. Extract all relevant job information into the specified JSON format.
-        2. Identify the source platform (e.g., LinkedIn, Indeed, Company Website) and set 'source_label'.
-        3. If a field is not found, leave it as null or an empty list as appropriate.
-        4. For 'seniority', 'employment_type', 'remote_policy', and 'application_method', use ONLY the allowed enum values.
-        5. For 'extraction_confidence', use 'high' only if the title, company, and requirements are clearly present.
-        
-        ENUM VALUES:
-        - seniority: intern, junior, mid, senior, lead, unknown
-        - employment_type: full_time, part_time, contract, internship, temporary, unknown
-        - remote_policy: remote, hybrid, onsite, unknown
-        - application_method: email, external_link, portal, unknown
-        - extraction_confidence: low, medium, high
-        
-        SCHEMA:
-        - title: Job title
-        - company: Company name
-        - summary: 2-3 sentence overview
-        - requirements: List of key requirements
-        - required_skills: List of technical skills
-        - preferred_skills: List of nice-to-have skills
-        - experience_years_required: e.g. "3+ years"
-        - seniority: Enum value
-        - employment_type: Enum value
-        - location: City, State/Country or "Remote"
-        - remote_policy: Enum value
-        - application_method: Enum value
-        - application_email: Email to apply to
-        - application_url: URL to apply at
-        - deadline: ISO 8601 date or raw string
-        - salary_info: e.g. "$120k - $150k"
-        - source_label: e.g. "LinkedIn"
-        - raw_excerpt: A 200-300 character snippet of the original text
-        - missing_fields: List of missing important fields
-        - extraction_confidence: Enum value
-        
-        CONTENT:
-        ---
-        {processed_content if not image_data else "[IMAGE PROVIDED]"}
-        ---
-        
-        OUTPUT: Return a JSON object matching the ExtractedJob schema.
-        """
+Extraction
+You are a strict data extraction engine.
+
+Your task is to extract structured job information from raw job description text.
+
+RULES:
+
+* Return ONLY valid JSON
+* No explanations
+* No markdown
+* No extra text
+* Do NOT hallucinate missing fields
+* If data is missing, return null or empty array
+
+OUTPUT FORMAT:
+{{
+"title": "string | null",
+"company": "string | null",
+"location": "string | null",
+"employment_type": "string | null",
+"seniority": "string | null",
+"summary": "string | null",
+"requirements": ["string"],
+"skills": ["string"]
+}}
+
+EXTRACTION GUIDELINES:
+
+* "title" = job title
+* "company" = hiring company
+* "requirements" = responsibilities + requirements (merged clean list)
+* "skills" = explicit tools, technologies, competencies
+* Keep items SHORT and CLEAN
+* Remove duplicates
+* Do NOT invent skills
+
+INPUT:
+{processed_content if not image_data else "[IMAGE PROVIDED]"}
+"""
         
         fallback = ExtractedJob(
             title="Unknown Job",

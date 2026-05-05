@@ -6,7 +6,11 @@ import {
   SourceType, 
   UserProfile, 
   OutputMode, 
-  Tone
+  Tone,
+  AIModelOutput,
+  EmploymentType,
+  Seniority,
+  ExtractionConfidence
 } from "../types";
 
 // Initialize Gemini API
@@ -14,47 +18,55 @@ import {
 const ai = new GoogleGenAI({ apiKey: (process.env as any).GEMINI_API_KEY || "" });
 
 export const aiService = {
-  async extractJob(content: string, sourceType: SourceType): Promise<ExtractedJob> {
+  async extractJob(content: string, sourceType: SourceType): Promise<{ model_output: AIModelOutput, normalized_job: ExtractedJob }> {
     const prompt = `
-      TASK: Extract job details from the provided ${sourceType}.
-      
-      INSTRUCTIONS:
-      1. Extract all relevant job information into the specified JSON format.
-      2. Identify the source platform (e.g., LinkedIn, Indeed, Company Website) and set 'source_label'.
-      3. If a field is not found, leave it as null or an empty list as appropriate.
-      4. For 'seniority', 'employment_type', 'remote_policy', and 'application_method', use ONLY the allowed enum values.
-      5. For 'extraction_confidence', use 'high' only if the title, company, and requirements are clearly present.
-      
-      ENUM VALUES:
-      - seniority: intern, junior, mid, senior, lead, unknown
-      - employment_type: full_time, part_time, contract, internship, temporary, unknown
-      - remote_policy: remote, hybrid, onsite, unknown
-      - application_method: email, external_link, portal, unknown
-      - extraction_confidence: low, medium, high
-      
-      SCHEMA:
-      {
-        "title": "Job title",
-        "company": "Company name",
-        "summary": "2-3 sentence overview",
-        "requirements": ["List of key requirements"],
-        "required_skills": ["List of technical skills"],
-        "preferred_skills": ["List of nice-to-have skills"],
-        "experience_years_required": "e.g. 3+ years",
-        "seniority": "Enum value",
-        "employment_type": "Enum value",
-        "location": "City, State/Country or Remote",
-        "remote_policy": "Enum value",
-        "application_method": "Enum value",
-        "application_email": "Email to apply to",
-        "application_url": "URL to apply at",
-        "deadline": "ISO 8601 date or raw string",
-        "salary_info": "e.g. $120k - $150k",
-        "source_label": "e.g. LinkedIn",
-        "raw_excerpt": "A 200-300 character snippet of the original text",
-        "missing_fields": ["List of missing important fields"],
-        "extraction_confidence": "Enum value"
-      }
+Extraction: Job Board Intelligence
+You are a strict data extraction engine specializing in job postings.
+
+Your task is to extract structured job information from raw job description text or images.
+
+RULES:
+* Return ONLY valid JSON
+* No explanations, markdown, or extra text
+* Do NOT hallucinate missing fields. If data is missing, return null or empty array.
+
+OUTPUT FORMAT:
+{
+  "title": "string | null",
+  "company": "string | null",
+  "location": "string | null",
+  "employment_type": "string | null",
+  "seniority": "string | null",
+  "summary": "string | null",
+  "requirements": ["string"],
+  "skills": ["string"]
+}
+
+EXTRACTION GUIDELINES:
+
+* "title": The official job role. 
+  - EDGE CASE: If the title is buried in a sentence like "We are seeking a [Role] to join...", extract "[Role]".
+  - CLEANING: Remove locations, company names, and salary info from the title (e.g., "Fullstack Developer - Remote - 100k" -> "Fullstack Developer").
+  - FORMAT: Use Title Case.
+
+* "company": The specific hiring entity.
+  - EDGE CASE: If a recruiter says "Hiring for our client in the Fintech space", return null for company unless the client name is explicitly named. 
+  - PROSE: Look for phrases like "Join the team at [Company]" or "[Company] is looking for...".
+  - DO NOT return the name of the job board (e.g., "LinkedIn", "Indeed") as the company.
+
+* "requirements": A clean, merged list of responsibilities and mandatory qualifications. Max 15 items.
+* "skills": Explicit tools (e.g., React, AWS), programming languages, and hard competencies.
+* "seniority": One of: Intern, Entry, Junior, Mid, Senior, Lead, Staff, Principal, Director, Executive. Infer from context.
+
+EXAMPLES (EDGE CASES):
+1. INPUT: "Exciting opportunity for a Python expert to help our growth at EcoTech Solutions."
+   -> title: "Python Expert", company: "EcoTech Solutions"
+
+2. INPUT: "Software Engineer (Javascript/Node) | Global Bank | New York"
+   -> title: "Software Engineer (Javascript/Node)", company: "Global Bank", location: "New York"
+
+3. INPUT: "We are an industry-leading startup in AI looking for a Senior Product Manager."
+   -> title: "Senior Product Manager", company: null (name not provided)
     `;
 
     try {
@@ -74,27 +86,76 @@ export const aiService = {
           ]
         };
       } else {
-        contents = prompt + `\n\nCONTENT:\n---\n${content.substring(0, 30000)}\n---`;
+        contents = prompt + `\n\nINPUT:\n${content.substring(0, 30000)}`;
       }
 
-      const response = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
-        contents,
-        config: {
-          responseMimeType: "application/json",
-        }
-      });
+      try {
+        const response = await ai.models.generateContent({
+          model: "gemini-3-flash-preview",
+          contents,
+          config: {
+            responseMimeType: "application/json",
+          }
+        });
 
-      const data = JSON.parse(response.text || "{}");
-      return {
-        ...data,
-        source_type: sourceType,
-        raw_content: sourceType === SourceType.image ? content : content // content is already the raw text or base64
-      };
+        const extractedData = JSON.parse(response.text || "{}");
+        return this.processExtractedData(extractedData, content, sourceType);
+      } catch (visionError) {
+        // Robust Fallback: If vision fails (quota, network, etc.), use Tesseract
+        if (sourceType === SourceType.image && content.startsWith('data:image')) {
+          console.warn("[AI Service] Gemini Vision failed. Falling back to local Tesseract OCR...", visionError);
+          const { ocrService } = await import("./ocrService");
+          const extractedText = await ocrService.tesseractOCR(content);
+          
+          if (!extractedText || extractedText.trim().length < 10) {
+            throw new Error("OCR failed to find legible text in this image.");
+          }
+
+          // Recursive call but as text source type to get structure
+          return this.extractJob(extractedText, SourceType.text);
+        }
+        throw visionError;
+      }
     } catch (error) {
       console.error("AI Extraction Error:", error);
-      throw new Error("Failed to extract job details. Please try again or provide more text.");
+      throw new Error(error instanceof Error ? error.message : "Failed to extract job details.");
     }
+  },
+
+  processExtractedData(extractedData: any, content: string, sourceType: SourceType) {
+    const model_output: AIModelOutput = {
+      title: extractedData.title ?? null,
+      company: extractedData.company ?? null,
+      location: extractedData.location ?? null,
+      employment_type: extractedData.employment_type ?? null,
+      seniority: extractedData.seniority ?? null,
+      summary: extractedData.summary ?? null,
+      requirements: extractedData.requirements ?? [],
+      skills: extractedData.skills ?? []
+    };
+
+    const normalized_job: ExtractedJob = {
+      title: model_output.title,
+      company: model_output.company,
+      location: model_output.location,
+      employment_type: (model_output.employment_type as EmploymentType | null),
+      seniority: (model_output.seniority as Seniority | null),
+      summary: model_output.summary,
+      requirements: model_output.requirements,
+      required_skills: model_output.skills,
+      preferred_skills: [],
+      remote_policy: null,
+      application_method: null,
+      missing_fields: [],
+      source_type: sourceType,
+      raw_content: content,
+      model_output: model_output
+    };
+
+    return {
+      model_output,
+      normalized_job
+    };
   },
 
   async analyzeJob(job: ExtractedJob, userProfile: UserProfile): Promise<JobAnalysis> {
@@ -274,6 +335,222 @@ export const aiService = {
     } catch (error) {
       console.error("AI Synthesis Error:", error);
       throw new Error("Failed to synthesize profile from CV text.");
+    }
+  },
+
+  async generateTailoredCV(job: ExtractedJob, userProfile: UserProfile): Promise<{ markdown_content: string }> {
+    const masterCV = userProfile.cv_text || userProfile.experience_summary;
+
+    const generationPrompt = `
+      TASK: DETERMINISTIC CV COMPILER
+      You are a strict CV compiler. Your task is to transform the provided MASTER CV into a tailored version for a specific JOB while strictly adhering to a non-negotiable format and quality rules.
+
+      JOB DATA:
+      - Title: ${job.title}
+      - Company: ${job.company}
+      - Requirements: ${job.requirements.join(', ')}
+      - Skills Needed: ${job.required_skills.join(', ')}
+
+      MASTER CV DATA:
+      ---
+      ${masterCV}
+      ---
+
+      1. FIXED STRUCTURE (NON-NEGOTIABLE):
+      The CV must always follow this exact skeleton. Do NOT change these headers or the order:
+      
+      # [NAME]
+      **[TITLE]**
+      [Location]
+      [Phone]
+      [Email]
+      [GitHub]
+      [Portfolio]
+
+      ---
+      ## PROFESSIONAL SUMMARY
+      [Exactly 3 paragraphs tailored to the job]
+
+      ---
+      ## CORE TECHNICAL SKILLS
+      ### [Category Name]
+      * [Skill Item]
+      (Repeat categories like Backend, Frontend, Cloud & Infrastructure, etc.)
+
+      ---
+      ## PROFESSIONAL EXPERIENCE
+      ### [Role]
+      **[Company] – [Location]**
+      [Dates]
+      * [Measurable Achievement Bullets]
+      Impact:
+      * [Summary of results/business impact]
+      (Repeat for each relevant role)
+
+      ---
+      ## SELECTED ENGINEERING PROJECTS
+      ### [Project Name]
+      **[Stack/Technologies]**
+      * [Implementation Details]
+      Impact: (optional)
+      Keywords: [Comma separated list of tags]
+
+      ---
+      ## EDUCATION
+      [Degree] - [University] - [Date]
+
+      ---
+      ## ADDITIONAL VALUE
+      * [Certifications, Languages, or Volunteer work]
+
+      ---
+      ## AVAILABILITY
+      [1 paragraph about notice period and location preference]
+
+      2. BULLET FORMULA (MANDATORY):
+      Every bullet in 'Professional Experience' and 'Projects' must follow:
+      [ACTION VERB] + [SYSTEM/TECHNOLOGY] + [MEASURABLE IMPACT/CONTEXT]
+
+      3. HARD RULES:
+      - NO WEAK VERBS (e.g., worked on, helped, assisted, responsible for). Use: Engineered, Architected, Orchestrated, Optimized, Spearheaded.
+      - NO GENERIC PHRASES.
+      - EVERY business experience bullet MUST include specific system context and technology.
+      - EVERY role in 'Professional Experience' MUST conclude with an "Impact:" section.
+
+      4. OUTPUT FORMAT (STRICT MARKDOWN):
+      - Use "#" for Name.
+      - Use "**" for Titles and Companies.
+      - Use "*" for bullets.
+      - Use "---" between sections.
+      - Maintain exact spacing and professional alignment.
+
+      Proceed with the controlled transformation.
+    `;
+
+    try {
+      // STEP 2 & 3: Generation and Bullet Formula Enforcement
+      const firstPass = await ai.models.generateContent({
+        model: "gemini-3-flash-preview",
+        contents: generationPrompt
+      });
+      const rawCV = firstPass.text;
+
+      // STEP 4: Validation Pass (Mandatory)
+      const validationPrompt = `
+        TASK: CV COMPILER VALIDATION (STRICT SECOND PASS)
+        Review the generated CV below and fix any deviations from the strict CV Compiler rules.
+
+        GENERATED CV:
+        ---
+        ${rawCV}
+        ---
+
+        VALIDATION CHECKLIST:
+        1. STRUCTURE: Ensure order is: Header -> Summary (3 paras) -> Skills -> Experience -> Projects -> Education -> Additional Value -> Availability.
+        2. ENTITY CHECK: Does every experience section have an "Impact:" subsection?
+        3. BULLET FORMULA: Does every bullet follow [ACTION] + [SYSTEM/TECH] + [IMPACT]?
+        4. VERB CHECK: Are there any weak verbs like "helped" or "assisted"? If yes, replace with high-impact engineering verbs.
+        5. FORMATTING: Are "#", "**", and "---" used correctly for strict Markdown styling?
+
+        Return ONLY the final, validated Markdown CV. No preamble, no commentary.
+      `;
+
+      const finalPass = await ai.models.generateContent({
+        model: "gemini-3-flash-preview",
+        contents: validationPrompt
+      });
+
+      // STEP 5: Return final Markdown CV
+      return { 
+        markdown_content: finalPass.text || "DETERMINISTIC COMPILER ERROR: Output was empty." 
+      };
+    } catch (error) {
+      console.error("DETERMINISTIC CV COMPILER Error:", error);
+      throw new Error("Failed to compile deterministic CV. Pipeline interruption.");
+    }
+  },
+
+  async generateMasterCV(userProfile: UserProfile): Promise<{ markdown_content: string }> {
+    const rawProfile = userProfile.cv_text || userProfile.experience_summary;
+
+    const generationPrompt = `
+      TASK: MASTER CV GENERATOR
+      You are a strategic career architect. Your task is to generate a comprehensive MASTER CV based on the user's total professional context. This CV is not tailored to a job but serves as the definitive reference artifact.
+
+      USER DATA:
+      ---
+      ${rawProfile}
+      ---
+
+      1. FIXED STRUCTURE (NON-NEGOTIABLE):
+      The CV must always follow this exact skeleton. Do NOT change these headers or the order:
+      
+      # [NAME]
+      **[TITLE]**
+      [Location]
+      [Phone]
+      [Email]
+      [GitHub]
+      [Portfolio]
+
+      ---
+      ## PROFESSIONAL SUMMARY
+      [Exactly 3 paragraphs summarizing the total career value]
+
+      ---
+      ## CORE TECHNICAL SKILLS
+      ### [Category Name]
+      * [Skill Item]
+      (Categorize all skills from the profile)
+
+      ---
+      ## PROFESSIONAL EXPERIENCE
+      ### [Role]
+      **[Company] – [Location]**
+      [Dates]
+      * [Measurable Achievement Bullets]
+      Impact:
+      * [Summary of results/business impact]
+      (Include all relevant roles)
+
+      ---
+      ## SELECTED ENGINEERING PROJECTS
+      ### [Project Name]
+      **[Stack/Technologies]**
+      * [Implementation Details]
+      Impact: (optional)
+      Keywords: [Comma separated list of tags]
+
+      ---
+      ## EDUCATION
+      [Degree] - [University] - [Date]
+
+      ---
+      ## ADDITIONAL VALUE
+      * [Certifications, Languages, or Volunteer work]
+
+      ---
+      ## AVAILABILITY
+      [1 paragraph about notice period and location preference]
+
+      RULES:
+      - Use strictly professional, high-impact language.
+      - Follow the exact 8-pillar skeleton.
+      - Return ONLY Markdown.
+    `;
+
+    try {
+      const response = await ai.models.generateContent({
+        model: "gemini-3-flash-preview",
+        contents: generationPrompt
+      });
+
+      return { 
+        markdown_content: response.text || "MASTER GENERATOR ERROR: Output was empty." 
+      };
+    } catch (error) {
+      console.error("MASTER CV GENERATOR Error:", error);
+      throw new Error("Failed to generate master CV.");
     }
   }
 };

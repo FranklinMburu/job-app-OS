@@ -88,6 +88,17 @@ export enum JobStatus {
     follow_up = "follow_up",
 }
 
+export type AIModelOutput = {
+  title: string | null;
+  company: string | null;
+  location: string | null;
+  employment_type: string | null;
+  seniority: string | null;
+  summary: string | null;
+  requirements: string[];
+  skills: string[];
+};
+
 export interface ExtractedJob {
     id?: string;
     uid?: string;
@@ -98,11 +109,11 @@ export interface ExtractedJob {
     required_skills: string[];
     preferred_skills: string[];
     experience_years_required?: string;
-    seniority: Seniority;
-    employment_type: EmploymentType;
+    seniority: Seniority | null;
+    employment_type: EmploymentType | null;
     location?: string;
-    remote_policy: RemotePolicy;
-    application_method: ApplicationMethod;
+    remote_policy: RemotePolicy | null;
+    application_method: ApplicationMethod | null;
     application_email?: string;
     application_url?: string;
     deadline?: string;
@@ -113,14 +124,17 @@ export interface ExtractedJob {
     raw_excerpt?: string;
     raw_content?: string;
     missing_fields: string[];
-    extraction_confidence: ExtractionConfidence;
+    extraction_confidence?: ExtractionConfidence;
     status?: JobStatus;
     postgres_id?: number;
     analysis?: JobAnalysis;
     analysis_at?: any;
     analysis_profile_at?: any;
     captured_at?: any;
+    model_output?: AIModelOutput;
 }
+
+export type NormalizedJob = ExtractedJob;
 
 export enum Verdict {
     relevant = "relevant",
@@ -162,4 +176,24 @@ export interface GeneratedApplication {
     generation_confidence: ExtractionConfidence;
     applied_at?: any;
     notes?: string;
+}
+
+export interface GeneratedCV {
+    id?: string;
+    uid?: string;
+    job_id?: string;
+    markdown_content: string;
+    tailored_to: string; // Job Title + Company
+    generated_at?: any;
+}
+
+export interface JobTrackingRecord {
+    id: number;
+    uid: string;
+    title: string;
+    company: string;
+    status: string;
+    firestore_id: string | null;
+    extra_data: any;
+    created_at: string;
 }

@@ -165,7 +165,19 @@ export const RawDataViewer: React.FC<RawDataViewerProps> = ({ job, onClose, onSa
               <div className="flex-1 overflow-auto">
                 {view === 'readable' ? (
                   <div className="text-white/70 whitespace-pre-wrap break-words">
-                    {job.raw_content || "No raw content available for this record."}
+                    {job.raw_content?.startsWith('data:image') ? (
+                      <div className="flex flex-col items-center gap-4 py-4">
+                        <img 
+                          src={job.raw_content} 
+                          alt="Raw Source" 
+                          className="max-w-full rounded border border-white/10 shadow-xl"
+                          referrerPolicy="no-referrer"
+                        />
+                        <p className="text-[10px] text-white/20 uppercase tracking-widest font-mono">End-to-End Visual Capture Archive</p>
+                      </div>
+                    ) : (
+                      job.raw_content || "No raw content available for this record."
+                    )}
                   </div>
                 ) : (
                   <pre className="text-neon-blue/80 overflow-x-auto">

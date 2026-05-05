@@ -1,10 +1,11 @@
 import express from 'express';
 import { createServer as createViteServer } from 'vite';
-import { createProxyMiddleware } from 'http-proxy-middleware';
-import { spawn } from 'child_process';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 import * as cheerio from 'cheerio';
+import pg from 'pg';
+const { Pool } = pg;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -12,7 +13,101 @@ const __dirname = path.dirname(__filename);
 async function startServer() {
   const app = express();
   const PORT = 3000;
-  const BACKEND_PORT = 8000;
+
+  // Initialize Postgres Pool
+  let pool: any = null;
+  const dbUrl = process.env.DATABASE_URL || '';
+  
+  if (dbUrl && !dbUrl.includes('base') && dbUrl.startsWith('postgres')) {
+    pool = new Pool({
+      connectionString: dbUrl,
+      ssl: dbUrl.includes('localhost') ? false : { rejectUnauthorized: false },
+      connectionTimeoutMillis: 5000,
+    });
+  }
+
+  // Local JSON Database Fallback (for zero-config experience)
+  const LOCAL_DB_PATH = path.join(process.cwd(), 'local_jobs.json');
+  const getLocalJobs = async () => {
+    try {
+      const data = await fs.promises.readFile(LOCAL_DB_PATH, 'utf-8');
+      return JSON.parse(data);
+    } catch {
+      return [];
+    }
+  };
+  const saveLocalJobs = async (jobs: any[]) => {
+    await fs.promises.writeFile(LOCAL_DB_PATH, JSON.stringify(jobs, null, 2));
+  };
+
+  const isDbAvailable = () => {
+    return !!pool && !pgAuthFailed;
+  };
+
+  let pgAuthFailed = false;
+  let pgAuthErrorMessage = '';
+
+  // Initialize database table if needed
+  async function initDb() {
+    if (!pool) {
+      console.log('[Database] Configuration incomplete. Using Local JSON Database.');
+      if (!fs.existsSync(LOCAL_DB_PATH)) await saveLocalJobs([]);
+      return;
+    }
+    
+    // Check for clear placeholders
+    const url = process.env.DATABASE_URL || '';
+    if (url.includes('username:password') || url.includes('YOUR_POSTGRES_URL')) {
+      console.log('[Database] Placeholder URL detected. Using Local JSON Database.');
+      if (!fs.existsSync(LOCAL_DB_PATH)) await saveLocalJobs([]);
+      return;
+    }
+
+    try {
+      // Test connection immediately with a direct client
+      const client = await pool.connect();
+      try {
+        await client.query('SELECT 1');
+        console.log('[Postgres] Neural Link Established');
+      } finally {
+        client.release();
+      }
+
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS jobs (
+          id SERIAL PRIMARY KEY,
+          uid VARCHAR(255),
+          firestore_id VARCHAR(255) UNIQUE,
+          title VARCHAR(255) NOT NULL,
+          company VARCHAR(255) NOT NULL,
+          summary TEXT,
+          location VARCHAR(255),
+          status VARCHAR(50) DEFAULT 'saved',
+          captured_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+          extra_data JSONB
+        );
+        CREATE INDEX IF NOT EXISTS idx_jobs_uid ON jobs(uid);
+        CREATE INDEX IF NOT EXISTS idx_jobs_firestore_id ON jobs(firestore_id);
+      `);
+      console.log('[Postgres] Database initialized successfully');
+    } catch (err: any) {
+      if (err.message.includes('authentication failed')) {
+        pgAuthFailed = true;
+        pgAuthErrorMessage = err.message;
+        console.log('[Postgres] Credentials Invalid. Configure DATABASE_URL for Postgres mode.');
+      } else if (err.message.includes('ECONNREFUSED')) {
+        pgAuthFailed = true;
+        pgAuthErrorMessage = "Database host unreachable";
+        console.log('[Postgres] Host Unreachable. Falling back to local storage.');
+      } else {
+        console.error('[Postgres] Structural Error:', err.message);
+      }
+      if (!fs.existsSync(LOCAL_DB_PATH)) await saveLocalJobs([]);
+    }
+  }
+  
+  initDb();
 
   app.use(express.json({ limit: '10mb' }));
 
@@ -22,8 +117,57 @@ async function startServer() {
     next();
   });
 
+  // API Router
+  const apiRouter = express.Router();
+
+  // Force JSON for all API routes to prevent HTML fall-through
+  apiRouter.use((req, res, next) => {
+    res.setHeader('Content-Type', 'application/json');
+    next();
+  });
+
+  // Health check
+  apiRouter.get('/health', async (req, res) => {
+    const url = process.env.DATABASE_URL || '';
+    const isConfigured = !!url && !url.includes('base');
+    const isPlaceholder = url.includes('username:password') || url.includes('YOUR_POSTGRES_URL');
+    
+    let connectionStatus = isDbAvailable() ? 'ready' : (pgAuthFailed ? 'authentication_failed' : 'using_local_fallback');
+    let connectionError = pgAuthErrorMessage || null;
+    let actualDbType = isDbAvailable() ? 'postgres' : 'json_lite';
+
+    if (isDbAvailable() && pool) {
+      try {
+        const client = await pool.connect();
+        try {
+          await client.query('SELECT 1');
+          connectionStatus = 'connected';
+        } finally {
+          client.release();
+        }
+      } catch (err: any) {
+        connectionStatus = 'connection_error';
+        connectionError = err.message;
+        actualDbType = 'json_lite_fallback';
+      }
+    }
+    
+    res.json({ 
+      status: 'ok', 
+      service: 'full-stack-bridge', 
+      database: actualDbType,
+      db_diagnostics: {
+        present: isConfigured,
+        is_placeholder: isPlaceholder,
+        connection_status: connectionStatus,
+        connection_error: connectionError,
+        auth_failed: pgAuthFailed
+      }
+    });
+  });
+
   // Web Scraping Endpoint
-  app.post('/api/fetch-url', async (req, res) => {
+  apiRouter.post('/fetch-url', async (req, res) => {
     const { url } = req.body;
     if (!url) return res.status(400).json({ error: 'URL is required' });
 
@@ -31,19 +175,7 @@ async function startServer() {
       console.log(`[Scraper] Fetching: ${url}`);
       const response = await fetch(url, {
         headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-          'Accept-Language': 'en-US,en;q=0.9',
-          'Cache-Control': 'no-cache',
-          'Pragma': 'no-cache',
-          'Sec-Ch-Ua': '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
-          'Sec-Ch-Ua-Mobile': '?0',
-          'Sec-Ch-Ua-Platform': '"Windows"',
-          'Sec-Fetch-Dest': 'document',
-          'Sec-Fetch-Mode': 'navigate',
-          'Sec-Fetch-Site': 'none',
-          'Sec-Fetch-User': '?1',
-          'Upgrade-Insecure-Requests': '1'
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
         },
         redirect: 'follow'
       });
@@ -56,154 +188,198 @@ async function startServer() {
       const $ = cheerio.load(html);
 
       // Remove noise
-      $('script, style, nav, footer, header, aside, form, svg, noscript, iframe, .cookie-banner, #cookie-consent, [role="dialog"]').remove();
+      $('script, style, nav, footer, header, aside, form, svg, noscript, iframe').remove();
 
-      // Try to find common job board containers first to get cleaner text
-      let contentElement: any = $('body');
-      const jobContainers = [
-        '.job-description', '#job-description', '.description', '#description',
-        '.job-details', '#job-details', '[data-automation-id="jobPostingDescription"]',
-        '.job-info', '.posting-description', '.job-post-content', '.job-content'
-      ];
-
-      for (const selector of jobContainers) {
-        const found = $(selector);
-        if (found.length > 0) {
-          contentElement = found;
-          break;
-        }
-      }
-
-      // Extract text
-      const text = contentElement.text();
-      const cleanText = text
-        .replace(/\s+/g, ' ')
-        .replace(/\n+/g, '\n')
-        .trim();
-
-      if (cleanText.length < 100) {
-        // If we didn't find much in the container, fall back to body but with more aggressive cleaning
-        const bodyText = $('body').text()
-          .replace(/\s+/g, ' ')
-          .replace(/\n+/g, '\n')
-          .trim();
-        
-        if (bodyText.length < 100) {
-          throw new Error('Could not extract meaningful text from this page. It might be protected or require JavaScript.');
-        }
-        
-        return res.json({ content: bodyText.substring(0, 30000) });
-      }
-
-      res.json({ content: cleanText.substring(0, 30000) });
+      const text = $('body').text().replace(/\s+/g, ' ').trim();
+      res.json({ content: text.substring(0, 30000) });
     } catch (error: any) {
       console.error('[Scraper Error]:', error);
       res.status(500).json({ 
         error: 'Failed to fetch job page', 
-        detail: error.message,
-        hint: 'Some sites block automated access. Try copying and pasting the text directly.'
+        detail: error.message
       });
     }
   });
 
-  console.log('Starting Python backend on port ' + BACKEND_PORT + '...');
-  
-  let pythonLogs = '';
-  const startPython = (cmd: string) => {
-    console.log(`Attempting to start Python backend with ${cmd} on port ${BACKEND_PORT}...`);
-    const proc = spawn(cmd, ['-m', 'uvicorn', 'app.main:app', '--host', '127.0.0.1', '--port', BACKEND_PORT.toString(), '--log-level', 'debug'], {
-      cwd: process.cwd(),
-      env: { ...process.env, PYTHONPATH: process.cwd() }
-    });
+  // Tracking API
+  apiRouter.post('/tracking/jobs', async (req, res) => {
+    const { uid, title, company, status, firestore_id, extra_data } = req.body;
+    if (!uid || !title || !company) {
+      return res.status(400).json({ error: 'uid, title, and company are required' });
+    }
 
-    proc.stdout.on('data', (data) => {
-      const output = data.toString();
-      console.log(`[Python] ${output}`);
-      pythonLogs += `[STDOUT] ${output}\n`;
-      if (pythonLogs.length > 10000) pythonLogs = pythonLogs.slice(-10000);
-    });
+    const tryPostgres = async () => {
+      const result = await pool.query(
+        'INSERT INTO jobs (uid, title, company, status, firestore_id, extra_data) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *',
+        [uid, title, company, status || 'saved', firestore_id, extra_data]
+      );
+      return result.rows[0];
+    };
 
-    proc.stderr.on('data', (data) => {
-      const output = data.toString();
-      console.error(`[Python Error] ${output}`);
-      pythonLogs += `[STDERR] ${output}\n`;
-      if (pythonLogs.length > 10000) pythonLogs = pythonLogs.slice(-10000);
-    });
+    const tryLocal = async () => {
+      const jobs = await getLocalJobs();
+      const newJob = {
+        id: Date.now(),
+        uid,
+        title,
+        company,
+        status: status || 'saved',
+        firestore_id,
+        extra_data,
+        captured_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      };
+      jobs.push(newJob);
+      await saveLocalJobs(jobs);
+      return newJob;
+    };
 
-    proc.on('error', (err: any) => {
-      console.error(`[Python Process Error with ${cmd}]`, err);
-      console.error(`[Python Process Error Detail]`, JSON.stringify(err, null, 2));
-      if (cmd === 'python3') {
-        startPython('python');
-      }
-    });
-
-    proc.on('exit', (code, signal) => {
-      console.log(`[Python Exit with ${cmd}] Code: ${code}, Signal: ${signal}`);
-    });
-
-    return proc;
-  };
-
-  let pythonBackend = startPython('python3');
-
-  // Express health check
-  app.get('/health', (req, res) => {
-    res.json({ status: 'ok', service: 'full-stack-bridge' });
-  });
-
-  app.get('/health/logs', (req, res) => {
-    res.type('text/plain').send(pythonLogs || 'No logs yet.');
-  });
-
-  app.get('/health/app-backend-v1', async (req, res) => {
     try {
-      const response = await fetch(`http://127.0.0.1:${BACKEND_PORT}/api/health`);
-      const data = await response.json();
-      res.json({ backend: data });
+      if (isDbAvailable()) {
+        try {
+          const record = await tryPostgres();
+          return res.json(record);
+        } catch (pgErr) {
+          console.warn('[Postgres] Error, falling back to local:', pgErr);
+          const record = await tryLocal();
+          return res.json(record);
+        }
+      } else {
+        const record = await tryLocal();
+        return res.json(record);
+      }
     } catch (err: any) {
-      res.status(502).json({ error: 'Backend unreachable', detail: err.message });
+      res.status(500).json({ error: 'Database error', detail: err.message });
     }
   });
 
-  // Test endpoint to verify Express is reachable
-  app.get('/test-proxy', (req, res) => {
-    res.json({ status: 'ok', message: 'Express is reachable' });
+  apiRouter.get('/tracking/jobs', async (req, res) => {
+    const { uid } = req.query;
+    if (!uid) return res.status(400).json({ error: 'uid is required' });
+
+    const tryPostgres = async () => {
+      const result = await pool.query(
+        'SELECT * FROM jobs WHERE uid = $1 ORDER BY captured_at DESC',
+        [uid]
+      );
+      return result.rows;
+    };
+
+    const tryLocal = async () => {
+      const jobs = await getLocalJobs();
+      return jobs.filter((j: any) => j.uid === uid)
+        .sort((a: any, b: any) => new Date(b.captured_at).getTime() - new Date(a.captured_at).getTime());
+    };
+
+    try {
+      if (isDbAvailable()) {
+        try {
+          const records = await tryPostgres();
+          return res.json(records);
+        } catch (pgErr) {
+          console.warn('[Postgres] Error, falling back to local:', pgErr);
+          const records = await tryLocal();
+          return res.json(records);
+        }
+      } else {
+        const records = await tryLocal();
+        return res.json(records);
+      }
+    } catch (err: any) {
+      res.status(500).json({ error: 'Database error', detail: err.message });
+    }
   });
 
-  // Proxy API requests to FastAPI
-  app.use('/app-backend-v1', createProxyMiddleware({
-    target: `http://127.0.0.1:${BACKEND_PORT}`,
-    changeOrigin: true,
-    on: {
-      proxyReq: (proxyReq, req, res) => {
-        console.log(`[Proxy] Forwarding ${req.method} ${req.url} -> http://127.0.0.1:${BACKEND_PORT}${proxyReq.path}`);
-        console.log(`[Proxy] Request Headers:`, JSON.stringify(req.headers, null, 2));
-      },
-      proxyRes: (proxyRes, req, res) => {
-        console.log(`[Proxy] Received ${proxyRes.statusCode} from ${req.url}`);
-        if (proxyRes.statusCode === 401) {
-          console.error(`[Proxy 401] Headers:`, JSON.stringify(proxyRes.headers, null, 2));
-        }
-      },
-      error: (err, req, res) => {
-        console.error('[Proxy Error]', err);
-        if (res && 'status' in res && typeof res.status === 'function') {
-          res.status(502).json({ 
-            error: 'Proxy Error', 
-            detail: err.message,
-            path: (req as any).originalUrl || req.url 
-          });
-        }
-      },
-    },
-  }));
+  apiRouter.patch('/tracking/jobs/:id', async (req, res) => {
+    const { id } = req.params;
+    const { status, firestore_id } = req.body;
 
-  // Catch-all for /app-backend-v1 to prevent fallthrough to Vite
-  app.all('/app-backend-v1/*', (req, res) => {
+    const tryPostgres = async () => {
+      const result = await pool.query(
+        'UPDATE jobs SET status = $1, firestore_id = COALESCE($2, firestore_id), updated_at = CURRENT_TIMESTAMP WHERE id = $3 RETURNING *',
+        [status, firestore_id, id]
+      );
+      return result.rows[0];
+    };
+
+    const tryLocal = async () => {
+      const jobs = await getLocalJobs();
+      const index = jobs.findIndex((j: any) => String(j.id) === id);
+      if (index === -1) return null;
+      
+      jobs[index] = {
+        ...jobs[index],
+        status: status || jobs[index].status,
+        firestore_id: firestore_id || jobs[index].firestore_id,
+        updated_at: new Date().toISOString()
+      };
+      await saveLocalJobs(jobs);
+      return jobs[index];
+    };
+
+    try {
+      if (isDbAvailable()) {
+        try {
+          const record = await tryPostgres();
+          if (!record) return res.status(404).json({ error: 'Job not found' });
+          return res.json(record);
+        } catch (pgErr) {
+          console.warn('[Postgres] Error, falling back to local:', pgErr);
+          const record = await tryLocal();
+          if (!record) return res.status(404).json({ error: 'Job not found' });
+          return res.json(record);
+        }
+      } else {
+        const record = await tryLocal();
+        if (!record) return res.status(404).json({ error: 'Job not found' });
+        return res.json(record);
+      }
+    } catch (err: any) {
+      res.status(500).json({ error: 'Database error', detail: err.message });
+    }
+  });
+
+  apiRouter.delete('/tracking/jobs/:id', async (req, res) => {
+    const { id } = req.params;
+
+    const tryPostgres = async () => {
+      await pool.query('DELETE FROM jobs WHERE id = $1', [id]);
+    };
+
+    const tryLocal = async () => {
+      const jobs = await getLocalJobs();
+      const filtered = jobs.filter((j: any) => String(j.id) !== id);
+      await saveLocalJobs(filtered);
+    };
+
+    try {
+      if (isDbAvailable()) {
+        try {
+          await tryPostgres();
+          return res.json({ message: 'Job deleted successfully' });
+        } catch (pgErr) {
+          console.warn('[Postgres] Error, falling back to local:', pgErr);
+          await tryLocal();
+          return res.json({ message: 'Job deleted successfully' });
+        }
+      } else {
+        await tryLocal();
+        return res.json({ message: 'Job deleted successfully' });
+      }
+    } catch (err: any) {
+      res.status(500).json({ error: 'Database error', detail: err.message });
+    }
+  });
+
+  // Mount entire API router
+  app.use('/backend-v2060', apiRouter);
+
+  // Catch-all for /backend-v2060 (must be after router)
+  app.all('/backend-v2060/*', (req, res) => {
+    console.warn(`[Express] Unmatched API path: ${req.method} ${req.url}`);
     res.status(404).json({ 
       error: 'API Route Not Found', 
-      detail: `The requested path ${req.url} was not handled by the backend proxy.`,
+      detail: `The path ${req.url} was not matched by any internal tracking or scraping routes.`,
       path: req.url 
     });
   });
@@ -224,7 +400,7 @@ async function startServer() {
 
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`Full-stack server running on http://localhost:${PORT}`);
-    console.log(`Proxying /app-backend-v1 to http://localhost:${BACKEND_PORT}`);
+    console.log(`API routes available at /backend-v2060/tracking`);
   });
 }
 
