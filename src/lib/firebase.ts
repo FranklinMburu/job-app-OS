@@ -349,15 +349,21 @@ export const deleteChatHistory = async (id: string) => {
 export const saveGeneratedCV = async (uid: string, cv: any) => {
   const path = 'cv_history';
   try {
-    const cvRef = doc(collection(db, 'cv_history'));
-    await setDoc(cvRef, {
+    const cvRef = cv.id ? doc(db, 'cv_history', cv.id) : doc(collection(db, 'cv_history'));
+    const data = {
       ...cv,
       uid,
-      generated_at: Timestamp.now()
-    });
+      generated_at: cv.generated_at || Timestamp.now(),
+      updated_at: Timestamp.now()
+    };
+    
+    // Remote id from the body before saving to avoid redundancy
+    const { id, ...finalDoc } = data;
+    
+    await setDoc(cvRef, finalDoc, { merge: true });
     return cvRef.id;
   } catch (error) {
-    handleFirestoreError(error, OperationType.CREATE, path);
+    handleFirestoreError(error, OperationType.WRITE, path);
   }
 };
 

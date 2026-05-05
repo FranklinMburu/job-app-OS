@@ -18,9 +18,15 @@ import {
   FileDown,
   Clock,
   Layout,
-  History
+  History,
+  Edit3,
+  Save,
+  X,
+  Printer,
+  Sun,
+  Moon
 } from 'lucide-react';
-import { GlassCard, NeonButton } from './UI';
+import { GlassCard, NeonButton, cn } from './UI';
 import { GeneratedCV } from '../types';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
@@ -33,13 +39,26 @@ interface CVArtifactViewProps {
   onDelete?: () => void;
   onRelink?: (jobId: string) => void;
   onViewHistory?: (jobId: string) => void;
+  onVerifyStructure?: () => void;
   isHistoryItem?: boolean;
 }
 
-export const CVArtifactView: React.FC<CVArtifactViewProps> = ({ cv, onClose, onDelete, onRelink, onViewHistory, isHistoryItem = false }) => {
+export const CVArtifactView: React.FC<CVArtifactViewProps> = ({ 
+  cv, 
+  onClose, 
+  onDelete, 
+  onRelink, 
+  onViewHistory, 
+  onVerifyStructure,
+  isHistoryItem = false 
+}) => {
   const [copying, setCopying] = React.useState(false);
   const [saving, setSaving] = React.useState(false);
   const [downloading, setDownloading] = React.useState<string | null>(null);
+  const [isEditing, setIsEditing] = React.useState(false);
+  const [editedContent, setEditedContent] = React.useState(cv.markdown_content);
+  const [isSaving, setIsSaving] = React.useState(false);
+  const [previewTheme, setPreviewTheme] = React.useState<'light' | 'dark'>('light');
   const cvRef = useRef<HTMLDivElement>(null);
 
   // Auto-save CV if it's new
@@ -58,6 +77,25 @@ export const CVArtifactView: React.FC<CVArtifactViewProps> = ({ cv, onClose, onD
     };
     autoSave();
   }, [cv, isHistoryItem]);
+
+  const togglePreviewTheme = () => {
+    setPreviewTheme(prev => prev === 'light' ? 'dark' : 'light');
+  };
+
+  const handleSaveEdit = async () => {
+    if (!auth.currentUser || !cv.id) return;
+    setIsSaving(true);
+    try {
+      const updatedCV = { ...cv, markdown_content: editedContent };
+      await saveGeneratedCV(auth.currentUser.uid, updatedCV);
+      cv.markdown_content = editedContent; // Update local reference
+      setIsEditing(false);
+    } catch (err) {
+      console.error("Save Edit Fail:", err);
+    } finally {
+      setIsSaving(false);
+    }
+  };
 
   const handleCopy = () => {
     navigator.clipboard.writeText(cv.markdown_content);
@@ -83,45 +121,92 @@ export const CVArtifactView: React.FC<CVArtifactViewProps> = ({ cv, onClose, onD
       const canvas = await html2canvas(cvRef.current, {
         scale: 2,
         useCORS: true,
-        backgroundColor: '#ffffff',
+        backgroundColor: previewTheme === 'light' ? '#ffffff' : '#0f172a',
         onclone: (doc) => {
-          // html2canvas doesn't support oklch colors. 
-          // We need to ensure the captured element doesn't use them in standard properties.
+          // REMOVE ALL existing style/link tags that might contain oklch
+          const head = doc.head;
+          const styles = head.querySelectorAll('style, link[rel="stylesheet"]');
+          styles.forEach(s => s.remove());
+
           const element = doc.getElementById('cv-artifact-content');
           if (element) {
-            element.style.color = '#1e293b'; // slate-800
-            element.style.fontFamily = 'serif';
+            // Force standard layout colors
+            element.style.color = previewTheme === 'light' ? '#1e293b' : '#f8fafc';
+            element.style.backgroundColor = previewTheme === 'light' ? '#ffffff' : '#0f172a';
+            element.style.width = '800px';
+            element.style.margin = '0 auto';
+            element.style.padding = '60px';
+            element.style.position = 'relative';
+            element.style.display = 'block';
+            element.style.boxSizing = 'border-box';
           }
-          // Remove any elements that might be causing issues (like selection highlights if any)
-          const selectionStyle = doc.createElement('style');
-          selectionStyle.innerHTML = `
+          
+          // Inject ONLY safe, oklch-free styles for the PDF
+          const style = doc.createElement('style');
+          style.innerHTML = `
             * { 
-              selection-background-color: transparent !important; 
-              selection-color: inherit !important; 
-              background-image: none !important; 
+              margin: 0; padding: 0; box-sizing: border-box;
+              font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif !important;
+              color-scheme: ${previewTheme} !important;
             }
             #cv-artifact-content {
-              color: #1e293b !important;
+              background-color: ${previewTheme === 'light' ? '#ffffff' : '#0f172a'} !important;
+              color: ${previewTheme === 'light' ? '#1e293b' : '#f8fafc'} !important;
+              line-height: 1.5 !important;
+              font-size: 11pt !important;
             }
-            #cv-artifact-content h1, 
-            #cv-artifact-content h2, 
-            #cv-artifact-content h3 {
-              color: #0f172a !important;
+            h1 { 
+              font-size: 24pt !important; font-weight: 900 !important; text-transform: uppercase !important;
+              text-align: center !important; margin-bottom: 20pt !important; border-bottom: 2pt solid ${previewTheme === 'light' ? '#0f172a' : '#ffffff'} !important;
+              padding-bottom: 10pt !important; color: ${previewTheme === 'light' ? '#0f172a' : '#ffffff'} !important;
+              letter-spacing: -0.05em !important;
             }
+            h2 { 
+              font-size: 14pt !important; font-weight: 700 !important; text-transform: uppercase !important;
+              margin-top: 20pt !important; margin-bottom: 8pt !important; border-bottom: 1pt solid ${previewTheme === 'light' ? '#e2e8f0' : '#334155'} !important;
+              padding-bottom: 4pt !important; color: ${previewTheme === 'light' ? '#0f172a' : '#ffffff'} !important;
+              letter-spacing: 0.05em !important;
+            }
+            p { margin-bottom: 10pt !important; }
+            ul, ol { margin-left: 20pt !important; margin-bottom: 10pt !important; }
+            li { margin-bottom: 4pt !important; }
+            strong { font-weight: 700 !important; color: ${previewTheme === 'light' ? '#0f172a' : '#ffffff'} !important; }
+            a { color: inherit !important; text-decoration: none !important; }
+            
+            /* Hide any UI elements that might have leaked in */
+            .no-print, button, nav { display: none !important; }
           `;
-          doc.head.appendChild(selectionStyle);
+          doc.head.appendChild(style);
         }
       });
       const imgData = canvas.toDataURL('image/png');
       const pdf = new jsPDF('p', 'mm', 'a4');
-      const imgProps = pdf.getImageProperties(imgData);
       const pdfWidth = pdf.internal.pageSize.getWidth();
-      const pdfHeight = (imgProps.height * pdfWidth) / imgProps.width;
+      const pdfHeight = pdf.internal.pageSize.getHeight();
       
-      pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
+      const imgProps = pdf.getImageProperties(imgData);
+      const canvasActualHeight = (imgProps.height * pdfWidth) / imgProps.width;
+      
+      let heightLeft = canvasActualHeight;
+      let position = 0;
+
+      // First page
+      pdf.addImage(imgData, 'PNG', 0, position, pdfWidth, canvasActualHeight);
+      heightLeft -= pdfHeight;
+
+      // Subsequent pages if content exceeds one page
+      while (heightLeft > 0) {
+        position = heightLeft - canvasActualHeight;
+        pdf.addPage();
+        pdf.addImage(imgData, 'PNG', 0, position, pdfWidth, canvasActualHeight);
+        heightLeft -= pdfHeight;
+      }
+      
       pdf.save(`CV_${cv.tailored_to.replace(/\s+/g, '_')}.pdf`);
     } catch (err) {
-      console.error("PDF Fail:", err);
+      console.error("PDF Export failed. Fallback to basic rendering.", err);
+      // Attempt a simpler capture if the first one fails
+      alert("Traditional PDF generation failed. Use 'PRINT TO PDF' for better results.");
     } finally {
       setDownloading(null);
     }
@@ -238,7 +323,7 @@ export const CVArtifactView: React.FC<CVArtifactViewProps> = ({ cv, onClose, onD
         </div>
 
         <div className="flex items-center gap-3">
-          {onDelete && isHistoryItem && (
+          {onDelete && isHistoryItem && !isEditing && (
             <button 
               onClick={onDelete}
               className="p-2 rounded-lg bg-red-500/10 hover:bg-red-500 text-red-500 hover:text-white transition-all border border-red-500/20 mr-2"
@@ -246,19 +331,65 @@ export const CVArtifactView: React.FC<CVArtifactViewProps> = ({ cv, onClose, onD
               <Trash2 size={16} />
             </button>
           )}
+          
           <div className="flex items-center gap-1.5 p-1 bg-white/5 rounded-lg border border-white/10 mr-4">
-             <button onClick={handleDownloadMD} className="p-2 rounded hover:bg-white/10 text-white/60 hover:text-white transition-all group relative">
-               <FileCode size={16} />
-               <span className="absolute top-full right-0 mt-2 p-1 bg-black text-[8px] rounded opacity-0 group-hover:opacity-100 whitespace-nowrap">DOWNLOAD MD</span>
-             </button>
-             <button onClick={handleDownloadDocx} disabled={!!downloading} className="p-2 rounded hover:bg-white/10 text-white/60 hover:text-white transition-all group relative">
-               <FileDown size={16} />
-               <span className="absolute top-full right-0 mt-2 p-1 bg-black text-[8px] rounded opacity-0 group-hover:opacity-100 whitespace-nowrap">DOWNLOAD DOCX</span>
-             </button>
-             <button onClick={handleDownloadPDF} disabled={!!downloading} className="p-2 rounded hover:bg-white/10 text-white/60 hover:text-white transition-all group relative">
-               <Download size={16} />
-               <span className="absolute top-full right-0 mt-2 p-1 bg-black text-[8px] rounded opacity-0 group-hover:opacity-100 whitespace-nowrap">DOWNLOAD PDF</span>
-             </button>
+             {!isEditing && (
+               <>
+                 <button onClick={() => setIsEditing(true)} className="p-2 rounded hover:bg-white/10 text-white/60 hover:text-white transition-all group relative">
+                   <Edit3 size={16} />
+                   <span className="absolute top-full right-0 mt-2 p-1 bg-black text-[8px] rounded opacity-0 group-hover:opacity-100 whitespace-nowrap">EDIT CONTENT</span>
+                 </button>
+                 <div className="w-px h-4 bg-white/10 mx-1" />
+                 <button onClick={onVerifyStructure} className="p-2 rounded hover:bg-white/10 text-neon-blue hover:text-white transition-all group relative">
+                   <ShieldCheck size={16} />
+                   <span className="absolute top-full right-0 mt-2 p-1 bg-black text-[8px] rounded opacity-0 group-hover:opacity-100 whitespace-nowrap uppercase">Structure Intelligence</span>
+                 </button>
+                 <div className="w-px h-4 bg-white/10 mx-1" />
+                 <button onClick={handleDownloadMD} className="p-2 rounded hover:bg-white/10 text-white/60 hover:text-white transition-all group relative">
+                   <FileCode size={16} />
+                   <span className="absolute top-full right-0 mt-2 p-1 bg-black text-[8px] rounded opacity-0 group-hover:opacity-100 whitespace-nowrap">DOWNLOAD MD</span>
+                 </button>
+                 <button onClick={handleDownloadDocx} disabled={!!downloading} className="p-2 rounded hover:bg-white/10 text-white/60 hover:text-white transition-all group relative">
+                   <FileDown size={16} />
+                   <span className="absolute top-full right-0 mt-2 p-1 bg-black text-[8px] rounded opacity-0 group-hover:opacity-100 whitespace-nowrap">DOWNLOAD DOCX</span>
+                 </button>
+                 <button onClick={() => window.print()} className="p-2 rounded hover:bg-white/10 text-white/60 hover:text-white transition-all group relative">
+                   <Printer size={16} />
+                   <span className="absolute top-full right-0 mt-2 p-1 bg-black text-[8px] rounded opacity-0 group-hover:opacity-100 whitespace-nowrap">PRINT TO PDF</span>
+                 </button>
+                 <button onClick={handleDownloadPDF} disabled={!!downloading} className="p-2 rounded hover:bg-white/10 text-white/60 hover:text-white transition-all group relative">
+                   <Download size={16} />
+                   <span className="absolute top-full right-0 mt-2 p-1 bg-black text-[8px] rounded opacity-0 group-hover:opacity-100 whitespace-nowrap">DOWNLOAD PDF</span>
+                 </button>
+                 <div className="w-px h-4 bg-white/10 mx-1" />
+                 <button 
+                   onClick={togglePreviewTheme} 
+                   className="p-2 rounded hover:bg-white/10 text-white/60 hover:text-white transition-all group relative"
+                 >
+                   {previewTheme === 'light' ? <Moon size={16} /> : <Sun size={16} />}
+                   <span className="absolute top-full right-0 mt-2 p-1 bg-black text-[8px] rounded opacity-0 group-hover:opacity-100 whitespace-nowrap uppercase">
+                     THEME: {previewTheme}
+                   </span>
+                 </button>
+               </>
+             )}
+             {isEditing && (
+               <div className="flex items-center gap-2 px-2">
+                 <button 
+                  onClick={() => setIsEditing(false)} 
+                  className="p-2 rounded hover:bg-white/10 text-white/40 hover:text-white transition-all flex items-center gap-2 text-[10px] font-black"
+                >
+                   <X size={14} /> CANCEL
+                 </button>
+                 <NeonButton 
+                  onClick={handleSaveEdit} 
+                  isLoading={isSaving}
+                  className="!py-1.5 !px-3 text-[10px]"
+                >
+                   <Save size={14} className="mr-2" /> SAVE CHANGES
+                 </NeonButton>
+               </div>
+             )}
           </div>
 
           <NeonButton onClick={handleCopy} className="!py-2 !px-4 text-[10px]">
@@ -289,7 +420,7 @@ export const CVArtifactView: React.FC<CVArtifactViewProps> = ({ cv, onClose, onD
                     <div className="flex items-center gap-1.5 text-white/30 text-[9px] uppercase font-bold tracking-widest">
                       {item.icon} {item.label}
                     </div>
-                    <p className="text-xs font-bold text-white/90 truncate break-all">{item.value}</p>
+                    <p className="text-xs font-bold text-white/90 break-words">{item.value}</p>
                   </div>
                 ))}
               </div>
@@ -372,21 +503,47 @@ export const CVArtifactView: React.FC<CVArtifactViewProps> = ({ cv, onClose, onD
         </div>
 
         {/* Workspace Canvas */}
-        <div className="flex-1 bg-[#0f0f15] p-8 overflow-auto flex justify-center futuristic-scroll cursor-crosshair">
-          <motion.div 
-            initial={{ y: 50, opacity: 0 }}
-            animate={{ y: 0, opacity: 1 }}
-            transition={{ delay: 0.2 }}
-            ref={cvRef}
-            id="cv-artifact-content"
-            className="w-full max-w-[800px] bg-white text-slate-800 p-16 md:p-24 shadow-2xl rounded-sm min-h-[1132px] selection:bg-neon-blue/30 selection:text-slate-900 cursor-auto"
-          >
-            <div className="prose prose-slate max-w-none prose-h1:text-center prose-h1:border-b-2 prose-h1:border-slate-800 prose-h1:pb-4 prose-h1:uppercase prose-h1:tracking-tighter prose-h1:font-black prose-h2:border-b prose-h2:border-slate-200 prose-h2:pb-1 prose-h2:mt-10 prose-h2:uppercase prose-h2:font-bold prose-h2:tracking-wider prose-li:my-0">
-              <ReactMarkdown>
-                {cv.markdown_content}
-              </ReactMarkdown>
+        <div className="flex-1 bg-[#0a0a0f] p-4 md:p-12 overflow-auto flex justify-center futuristic-scroll items-start relative box-border">
+          {/* Subtle Workspace Grid Background */}
+          <div className="absolute inset-0 opacity-[0.03] pointer-events-none" 
+               style={{ backgroundImage: 'radial-gradient(circle, #fff 1px, transparent 1px)', backgroundSize: '32px 32px' }} />
+          
+          {isEditing ? (
+            <div className="w-full max-w-4xl h-full flex flex-col gap-4 relative z-10">
+              <div className="flex justify-between items-center px-4">
+                 <h3 className="text-[10px] font-black uppercase tracking-widest text-white/30">Markdown Core Editor</h3>
+                 <div className="flex gap-4">
+                    <span className="text-[10px] text-white/20 font-mono">CHARS: {editedContent.length}</span>
+                 </div>
+              </div>
+              <textarea
+                value={editedContent}
+                onChange={(e) => setEditedContent(e.target.value)}
+                className="flex-1 w-full bg-black/40 border border-white/10 rounded-xl p-8 text-sm font-mono text-white/80 focus:border-neon-purple outline-none transition-all resize-none futuristic-scroll min-h-[500px]"
+                spellCheck={false}
+              />
             </div>
-          </motion.div>
+          ) : (
+            <div 
+              ref={cvRef}
+              id="cv-artifact-content"
+              className={cn(
+                "w-full max-w-[850px] p-10 md:p-24 shadow-[0_0_100px_rgba(0,0,0,0.5)] rounded-sm min-h-[1132px] cursor-auto my-8 transition-all duration-500 relative z-10",
+                previewTheme === 'light' ? "bg-white text-slate-800" : "bg-slate-900 text-slate-100"
+              )}
+            >
+              <div className={cn(
+                "prose max-w-none prose-h1:text-center prose-h1:border-b-2 prose-h1:pb-6 prose-h1:uppercase prose-h1:tracking-tighter prose-h1:font-black prose-h2:border-b prose-h2:pb-2 prose-h2:mt-12 prose-h2:uppercase prose-h2:font-bold prose-h2:tracking-wider prose-li:my-1",
+                previewTheme === 'light' 
+                  ? "prose-slate prose-h1:border-slate-800 prose-h2:border-slate-200" 
+                  : "prose-invert prose-h1:border-slate-100 prose-h2:border-slate-700"
+              )}>
+                <ReactMarkdown>
+                  {cv.markdown_content}
+                </ReactMarkdown>
+              </div>
+            </div>
+          )}
         </div>
       </div>
       
@@ -394,6 +551,7 @@ export const CVArtifactView: React.FC<CVArtifactViewProps> = ({ cv, onClose, onD
       <AnimatePresence>
         {downloading && (
           <motion.div 
+            key="download-status-overlay"
             initial={{ y: 100 }}
             animate={{ y: 0 }}
             exit={{ y: 100 }}

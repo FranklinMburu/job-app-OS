@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@plugin "@tailwindcss/typography";
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
 
 @theme {
@@ -118,4 +119,34 @@
   pointer-events: none;
   z-index: 50;
   will-change: transform;
+}
+
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  #cv-artifact-content, #cv-artifact-content * {
+    visibility: visible;
+  }
+  #cv-artifact-content {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100% !important;
+    max-width: none !important;
+    margin: 0 !important;
+    padding: 15mm !important;
+    box-shadow: none !important;
+    border: none !important;
+    color: #000 !important;
+    background: #fff !important;
+    min-height: auto !important;
+  }
+  .prose {
+    color: #000 !important;
+  }
+  .prose h1, .prose h2, .prose h3 {
+    color: #000 !important;
+    border-color: #eee !important;
+  }
 }

@@ -11,11 +11,13 @@ import {
   ChevronRight,
   Eye,
   Copy,
+  Plus,
   History as HistoryIcon,
   ShieldCheck
 } from 'lucide-react';
 import { GlassCard, NeonButton } from './UI';
 import { GeneratedCV } from '../types';
+import { saveGeneratedCV } from '../lib/firebase';
 
 interface CVHistoryViewProps {
   cvs: GeneratedCV[];
@@ -108,6 +110,23 @@ export const CVHistoryView: React.FC<CVHistoryViewProps> = ({ cvs, onSelect, onD
                      className="flex-1 px-4 py-2 rounded-lg bg-neon-purple text-black text-[10px] font-black uppercase tracking-tight hover:scale-[1.02] active:scale-[0.98] transition-all flex items-center justify-center gap-2"
                    >
                      <Eye size={14} /> OPEN WORKSPACE
+                   </button>
+                   <button 
+                     onClick={async (e) => {
+                       e.stopPropagation();
+                       const { id, ...clonedData } = cv;
+                       const newId = await saveGeneratedCV(cv.uid, {
+                         ...clonedData,
+                         tailored_to: `${cv.tailored_to} (Copy)`,
+                         generated_at: new Date()
+                       });
+                       alert("Artifact duplicated successfully.");
+                     }}
+                     className="p-2 rounded-lg bg-white/5 hover:bg-white/10 text-white/40 hover:text-white transition-all border border-white/10 group relative"
+                     title="Clone Artifact"
+                   >
+                     <Plus size={16} />
+                     <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-black text-[8px] rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">CLONE</span>
                    </button>
                    <button 
                      onClick={() => {

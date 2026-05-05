@@ -65,6 +65,7 @@ import { ExtractionAuditView } from './components/ExtractionAuditView';
 import { CVArtifactView } from './components/CVArtifactView';
 import { CVHistoryView } from './components/CVHistoryView';
 import { StandaloneCVBuilder } from './components/StandaloneCVBuilder';
+import { StructureIntelligence } from './components/StructureIntelligence';
 import ReactMarkdown from 'react-markdown';
 import { 
   Sun, 
@@ -236,7 +237,6 @@ function AppContent() {
   const [systemContent, setSystemContent] = useState<any>(null);
   const [appTone, setAppTone] = useState<Tone>(Tone.professional);
   const [appMode, setAppMode] = useState<OutputMode>(OutputMode.email);
-  const [activeGeneratedCV, setActiveGeneratedCV] = useState<GeneratedCV | null>(null);
   const [loadingCV, setLoadingCV] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [returnStep, setReturnStep] = useState<string | null>(null);
@@ -253,6 +253,7 @@ function AppContent() {
   const [selectedAppIds, setSelectedAppIds] = useState<string[]>([]);
   const [inboxFilter, setInboxFilter] = useState<JobStatus | 'all'>('all');
   const [selectedCV, setSelectedCV] = useState<GeneratedCV | null>(null);
+  const [showStructureIntelligence, setShowStructureIntelligence] = useState(false);
   const [rawJobText, setRawJobText] = useState('');
 
   const handleUpdateJobStatus = async (jobId: string, status: JobStatus) => {
@@ -886,7 +887,8 @@ function AppContent() {
         uid: user.uid,
         generated_at: new Date()
       };
-      setActiveGeneratedCV(completeCV);
+      setSelectedCV(completeCV);
+      setStep('cv_artifact');
       setViewingJobIdForArtifacts(null);
     } catch (err: any) {
       console.error("CV Generation Fail:", err);
@@ -899,7 +901,7 @@ function AppContent() {
   const handleDeleteCV = async (id: string) => {
     try {
       await deleteGeneratedCV(id);
-      if (activeGeneratedCV?.id === id) setActiveGeneratedCV(null);
+      if (selectedCV?.id === id) setSelectedCV(null);
     } catch (err: any) {
       setError(err.message);
     }
@@ -1472,14 +1474,22 @@ function AppContent() {
                     </h3>
                     <p className="text-[10px] uppercase font-bold tracking-widest text-white/30">Create a tailored version of your resume for this specific job.</p>
                   </div>
-                  <NeonButton 
-                    variant="purple" 
-                    className="w-full py-6 text-md italic font-black uppercase tracking-tighter"
-                    onClick={() => handleGenerateCV(extractedJob)}
-                    isLoading={loadingCV}
-                  >
-                    <Download size={20} className="mr-2" /> Generate Tailored CV
-                  </NeonButton>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <NeonButton 
+                      variant="purple" 
+                      className="w-full py-6 text-md italic font-black uppercase tracking-tighter"
+                      onClick={() => handleGenerateCV(extractedJob)}
+                      isLoading={loadingCV}
+                    >
+                      <Download size={20} className="mr-2" /> Generate Tailored CV
+                    </NeonButton>
+                    <button 
+                      onClick={() => setShowStructureIntelligence(true)}
+                      className="w-full py-6 rounded-lg border border-white/10 bg-white/5 text-[10px] font-black uppercase tracking-widest text-white/40 hover:text-white hover:bg-white/10 transition-all flex items-center justify-center gap-2"
+                    >
+                      <ShieldCheck size={18} className="text-neon-blue" /> Verify Skeleton IQ
+                    </button>
+                  </div>
                   <div className="pt-4 border-t border-white/5 text-center">
                     <p className="text-[8px] font-mono text-white/20 uppercase tracking-[0.3em]">AI Resume Generator Ready</p>
                   </div>
@@ -1489,33 +1499,16 @@ function AppContent() {
           </div>
         ) : null;
       case 'cv_artifact':
-        return selectedCV && (
-          <CVArtifactView 
-            cv={selectedCV} 
-            onClose={() => setStep('cv_history')} 
-            onDelete={async () => {
-              if (selectedCV.id) {
-                await handleDeleteCV(selectedCV.id);
-                setSelectedCV(null);
-                setStep('cv_history');
-              }
-            }}
-            onRelink={(jobId) => {
-              const job = jobs.find(j => j.id === jobId);
-              if (job) {
-                setExtractedJob(job);
-                setStep('results');
-                setSelectedCV(null);
-              }
-            }}
-            onViewHistory={(jobId) => setViewingJobIdForArtifacts(jobId)}
-            isHistoryItem={true}
-          />
-        );
+        return <div className="flex items-center justify-center h-full text-white/20 uppercase text-[10px] font-black tracking-[0.2em]">Artifact Workspace Active</div>;
       case 'cv_history':
         return <CVHistoryView cvs={cvHistory} onSelect={(cv) => { setSelectedCV(cv); setStep('cv_artifact'); }} onDelete={handleDeleteCV} onViewJobHistory={(jobId) => setViewingJobIdForArtifacts(jobId)} />;
       case 'cv_builder':
-        return <StandaloneCVBuilder user={user} profile={profile} onCVSaved={(cv) => { setCvHistory([cv, ...cvHistory]); setStep('cv_history'); }} />;
+        return <StandaloneCVBuilder 
+          user={user} 
+          profile={profile} 
+          onCVSaved={(cv) => { setCvHistory([cv, ...cvHistory]); setSelectedCV(cv); setStep('cv_artifact'); }} 
+          onVerifyStructure={() => setShowStructureIntelligence(true)}
+        />;
       case 'tracking':
         return (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-8">
@@ -1601,7 +1594,7 @@ function AppContent() {
             handleDeleteJob={handleDeleteJob} 
             setExtractedJob={setExtractedJob} 
             setStep={setStep} 
-            setActiveGeneratedCV={setActiveGeneratedCV} 
+            setSelectedCV={setSelectedCV} 
             onViewRaw={(job: any) => { setRawDataJob(job); setShowRawData(true); }}
           />
         );
@@ -1745,7 +1738,8 @@ function AppContent() {
                       <div className="flex gap-2">
                         <button 
                           onClick={() => {
-                            setActiveGeneratedCV(cv);
+                            setSelectedCV(cv);
+                            setStep('cv_artifact');
                             setViewingJobIdForArtifacts(null);
                           }}
                           className="px-4 py-2 rounded-lg bg-neon-purple/10 border border-neon-purple/20 text-neon-purple text-[10px] font-black uppercase tracking-widest hover:bg-neon-purple/20 transition-all"
@@ -1764,7 +1758,7 @@ function AppContent() {
               onClick={() => {
                 setExtractedJob(job);
                 setStep('results');
-                setActiveGeneratedCV(null);
+                setSelectedCV(null);
                 setViewingJobIdForArtifacts(null);
               }}
               className="px-4 py-2 rounded-lg text-white/40 text-[10px] font-black uppercase tracking-widest hover:text-white transition-all"
@@ -1958,14 +1952,18 @@ function AppContent() {
         </div>
       )}
       <AnimatePresence>
-        {activeGeneratedCV && (
+        {selectedCV && step === 'cv_artifact' && (
           <CVArtifactView 
-            cv={activeGeneratedCV} 
-            onClose={() => setActiveGeneratedCV(null)} 
+            cv={selectedCV} 
+            onClose={() => {
+              setStep((returnStep as any) || 'cv_history');
+              setSelectedCV(null);
+            }} 
             onDelete={async () => {
-              if (activeGeneratedCV.id) {
-                await deleteGeneratedCV(activeGeneratedCV.id);
-                setActiveGeneratedCV(null);
+              if (selectedCV.id) {
+                await handleDeleteCV(selectedCV.id);
+                setSelectedCV(null);
+                setStep('cv_history');
               }
             }}
             onRelink={(jobId) => {
@@ -1973,17 +1971,26 @@ function AppContent() {
               if (job) {
                 setExtractedJob(job);
                 setStep('results');
-                setActiveGeneratedCV(null);
+                setSelectedCV(null);
               }
             }}
             onViewHistory={(jobId) => setViewingJobIdForArtifacts(jobId)}
+            onVerifyStructure={() => setShowStructureIntelligence(true)}
+          />
+        )}
+        {showStructureIntelligence && (
+          <StructureIntelligence 
+            key="structure-intel"
+            onClose={() => setShowStructureIntelligence(false)} 
+            cvContent={selectedCV?.markdown_content}
           />
         )}
         {viewingJobIdForArtifacts && (
-          <JobArtifactHistoryOverlay />
+          <JobArtifactHistoryOverlay key="artifact-history-overlay" />
         )}
         {showRawData && rawDataJob && (
           <RawDataViewer 
+            key="raw-data-viewer"
             job={rawDataJob} 
             onClose={() => {
               setShowRawData(false);
@@ -2232,8 +2239,8 @@ const UserProfileView = ({ profile, onSave, onSyncWithCV }: any) => {
               <NeonButton onClick={addSkill} variant="purple">Add</NeonButton>
             </div>
             <div className="flex flex-wrap gap-2">
-              {localProfile.skills.map((s: string) => (
-                <span key={s} className="px-3 py-1.5 rounded-full bg-neon-purple/10 border border-neon-purple/20 text-neon-purple text-[10px] font-bold uppercase flex items-center gap-2">
+              {localProfile.skills.map((s: string, i: number) => (
+                <span key={`${s}-${i}`} className="px-3 py-1.5 rounded-full bg-neon-purple/10 border border-neon-purple/20 text-neon-purple text-[10px] font-bold uppercase flex items-center gap-2">
                   {s}
                   <X size={10} className="cursor-pointer hover:text-white" onClick={() => setLocalProfile({...localProfile, skills: localProfile.skills.filter((sk: string) => sk !== s)})} />
                 </span>
@@ -2277,7 +2284,7 @@ const UserProfileView = ({ profile, onSave, onSyncWithCV }: any) => {
   );
 };
 
-const DatabaseManager = ({ jobs, cvHistory, updateJobStatus, handleDeleteJob, setExtractedJob, setStep, setActiveGeneratedCV, onViewRaw }: any) => {
+const DatabaseManager = ({ jobs, cvHistory, updateJobStatus, handleDeleteJob, setExtractedJob, setStep, setSelectedCV, onViewRaw }: any) => {
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-8">
       <div className="flex items-center justify-between">
@@ -2323,7 +2330,7 @@ const DatabaseManager = ({ jobs, cvHistory, updateJobStatus, handleDeleteJob, se
                        {cvHistory.filter((cv: any) => cv.job_id === job.id).map((cv: any, i: number) => (
                          <button 
                            key={cv.id} 
-                           onClick={() => setActiveGeneratedCV(cv)}
+                           onClick={() => { setSelectedCV(cv); setStep('cv_artifact'); }}
                            className="w-6 h-6 rounded bg-neon-purple/20 text-neon-purple flex items-center justify-center text-[9px] font-black border border-neon-purple/30 hover:bg-neon-purple hover:text-black transition-all"
                          >
                            {i + 1}
@@ -2372,8 +2379,8 @@ const AILogs = ({ aiLogs, isAdmin }: any) => {
                </tr>
             </thead>
             <tbody className="divide-y divide-white/5 font-mono">
-              {aiLogs.map((log: any) => (
-                <tr key={log.id} className="hover:bg-white/5 transition-colors">
+              {aiLogs.map((log: any, i: number) => (
+                <tr key={log.id || i} className="hover:bg-white/5 transition-colors">
                   <td className="p-4 text-white/40">{log.timestamp?.toDate().toLocaleString()}</td>
                   <td className="p-4 font-black uppercase text-neon-blue">{log.action}</td>
                   <td className="p-4 text-white/60">{log.model}</td>

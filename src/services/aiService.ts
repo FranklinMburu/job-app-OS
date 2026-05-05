@@ -342,117 +342,112 @@ EXAMPLES (EDGE CASES):
     const masterCV = userProfile.cv_text || userProfile.experience_summary;
 
     const generationPrompt = `
-      TASK: DETERMINISTIC CV COMPILER
-      You are a strict CV compiler. Your task is to transform the provided MASTER CV into a tailored version for a specific JOB while strictly adhering to a non-negotiable format and quality rules.
+      TASK: STRATEGIC CAREER ARCHITECT (DETERMINISTIC CV COMPILER)
+      You are NOT a simple resume writer. You are a High-Level Strategic Career Architect. Your mission is to re-engineer the user's MASTER CV into a precise, high-performance weapon designed to land an interview for the target role.
 
-      JOB DATA:
-      - Title: ${job.title}
-      - Company: ${job.company}
-      - Requirements: ${job.requirements.join(', ')}
-      - Skills Needed: ${job.required_skills.join(', ')}
+      JOB INTELLIGENCE:
+      - Role: ${job.title}
+      - Target Company: ${job.company}
+      - Core Requirements: ${job.requirements.join(', ')}
+      - Technical Stack Hub: ${job.required_skills.join(', ')}
 
-      MASTER CV DATA:
+      MASTER CV REFERENCE:
       ---
       ${masterCV}
       ---
 
-      1. FIXED STRUCTURE (NON-NEGOTIABLE):
-      The CV must always follow this exact skeleton. Do NOT change these headers or the order:
+      MISSION OBJECTIVES:
+      1. UNDERLYING PAIN POINT: Identify the implicit problem this company has (based on the job description) and position the user as the primary solution.
+      2. KEYWORD DENSITY: Saturate P3 and P4 with the specific technical keywords from the JOB DATA while maintaining professional narrative flow.
+      3. IMPACT AMPLIFICATION: Every achievement bullet must demonstrate a measurable business or technical lift.
+
+      ---
+      1. FIXED 8-PILLAR SKELETON (NON-NEGOTIABLE):
       
+      P1. HEADER MATRIX
       # [NAME]
-      **[TITLE]**
-      [Location]
-      [Phone]
-      [Email]
-      [GitHub]
-      [Portfolio]
+      **[TARGET ROLE: Match the job requirements]**
+      [Location] | [GitHub/Portfolio] | [Email] | [LinkedIn]
 
       ---
+      P2. PROFESSIONAL SUMMARY (THE BRIDGE)
       ## PROFESSIONAL SUMMARY
-      [Exactly 3 paragraphs tailored to the job]
+      INSTRUCTIONS: EXACTLY 3 PARAGRAPHS.
+      Para 1: THE ANCHOR. Position user as a master of the job's core domain.
+      Para 2: THE ARSENAL. High-density skill array matching the tech stack hub.
+      Para 3: THE BRIDGE. Explicitly address ${job.company}'s mission or industry-specific engineering challenges.
 
       ---
+      P3. CORE TECHNICAL SKILLS
       ## CORE TECHNICAL SKILLS
-      ### [Category Name]
-      * [Skill Item]
-      (Repeat categories like Backend, Frontend, Cloud & Infrastructure, etc.)
+      Categorized skill arrays (Backend, Frontend, Cloud, etc.).
+      * Group related technologies together into logical semantic clusters.
 
       ---
+      P4. PROFESSIONAL EXPERIENCE
       ## PROFESSIONAL EXPERIENCE
       ### [Role]
       **[Company] – [Location]**
       [Dates]
-      * [Measurable Achievement Bullets]
-      Impact:
-      * [Summary of results/business impact]
-      (Repeat for each relevant role)
+      * [Achievement Bullets: Action + Tech + Result]. Use the "X-Y-Z" formula.
+      
+      IMPACT:
+      * [MANDATORY IMPACT SUBSECTION]: Measurable outcomes, scalability metrics, or business ROI specifically resulting from the user's intervention.
 
       ---
+      P5. SELECTED ENGINEERING PROJECTS
       ## SELECTED ENGINEERING PROJECTS
       ### [Project Name]
-      **[Stack/Technologies]**
-      * [Implementation Details]
-      Impact: (optional)
-      Keywords: [Comma separated list of tags]
+      **Tech Stack Tags: [DevOps, Blockchain, React, etc.]**
+      * [Detailed technical implementation of complex features]
+      * [Engineering challenges overcome and architectural decisions]
 
       ---
+      P6. EDUCATION
       ## EDUCATION
-      [Degree] - [University] - [Date]
+      **[Degree + Classification]** - [University] - [Date]
 
       ---
+      P7. ADDITIONAL VALUE
       ## ADDITIONAL VALUE
-      * [Certifications, Languages, or Volunteer work]
+      * [Certifications]
+      * [Secondary Languages]
+      * [Volunteer Missions / Open Source]
 
       ---
+      P8. AVAILABILITY
       ## AVAILABILITY
-      [1 paragraph about notice period and location preference]
+      [Notice Period] | [Location Mobility: Remote/Hybrid/Willing to Relocate]
 
-      2. BULLET FORMULA (MANDATORY):
-      Every bullet in 'Professional Experience' and 'Projects' must follow:
-      [ACTION VERB] + [SYSTEM/TECHNOLOGY] + [MEASURABLE IMPACT/CONTEXT]
-
-      3. HARD RULES:
-      - NO WEAK VERBS (e.g., worked on, helped, assisted, responsible for). Use: Engineered, Architected, Orchestrated, Optimized, Spearheaded.
-      - NO GENERIC PHRASES.
-      - EVERY business experience bullet MUST include specific system context and technology.
-      - EVERY role in 'Professional Experience' MUST conclude with an "Impact:" section.
-
-      4. OUTPUT FORMAT (STRICT MARKDOWN):
-      - Use "#" for Name.
-      - Use "**" for Titles and Companies.
-      - Use "*" for bullets.
-      - Use "---" between sections.
-      - Maintain exact spacing and professional alignment.
-
-      Proceed with the controlled transformation.
+      HARD MANDATES:
+      - FORBIDDEN VERBS: helped, assisted, worked on, responsible for, supported.
+      - REQUIRED VERBS: Architected, Orchestrated, Engineered, Spearheaded, Optimized, Scaled, Accelerated, Synthesized.
+      - Every bullet must have a technical "hook" and a business "result".
     `;
 
     try {
-      // STEP 2 & 3: Generation and Bullet Formula Enforcement
+      // Pass 1: Strategic Compilation
       const firstPass = await ai.models.generateContent({
         model: "gemini-3-flash-preview",
         contents: generationPrompt
       });
       const rawCV = firstPass.text;
 
-      // STEP 4: Validation Pass (Mandatory)
+      // Pass 2: ATS & Impact Validation
       const validationPrompt = `
-        TASK: CV COMPILER VALIDATION (STRICT SECOND PASS)
-        Review the generated CV below and fix any deviations from the strict CV Compiler rules.
+        TASK: ATS & IMPACT AUDITOR (STRICT SECOND PASS)
+        Review the generated CV and fix any weaknesses. 
 
-        GENERATED CV:
-        ---
+        CV TO AUDIT:
         ${rawCV}
-        ---
 
-        VALIDATION CHECKLIST:
-        1. STRUCTURE: Ensure order is: Header -> Summary (3 paras) -> Skills -> Experience -> Projects -> Education -> Additional Value -> Availability.
-        2. ENTITY CHECK: Does every experience section have an "Impact:" subsection?
-        3. BULLET FORMULA: Does every bullet follow [ACTION] + [SYSTEM/TECH] + [IMPACT]?
-        4. VERB CHECK: Are there any weak verbs like "helped" or "assisted"? If yes, replace with high-impact engineering verbs.
-        5. FORMATTING: Are "#", "**", and "---" used correctly for strict Markdown styling?
+        AUDIT CRITERIA:
+        1. ATS DENSITY: Does it mention ${job.required_skills.join(', ')} in a natural but prominent way?
+        2. VERB STRENGTH: Are there any weak verbs? Replace with high-power engineering verbs if found.
+        3. P2 BRIDGE: Does Paragraph 3 of the Summary explicitly mention ${job.company} or their industry specific challenge?
+        4. MEASURABILITY: Does every experience section have a quantifiable result? If a percentage is missing, estimate a realistic technical lift based on the context.
 
-        Return ONLY the final, validated Markdown CV. No preamble, no commentary.
+        Return ONLY the final, validated Markdown CV. No preamble.
       `;
 
       const finalPass = await ai.models.generateContent({
@@ -460,9 +455,8 @@ EXAMPLES (EDGE CASES):
         contents: validationPrompt
       });
 
-      // STEP 5: Return final Markdown CV
       return { 
-        markdown_content: finalPass.text || "DETERMINISTIC COMPILER ERROR: Output was empty." 
+        markdown_content: finalPass.text || "ARCHITECT ERROR: Pipeline failed to produce content." 
       };
     } catch (error) {
       console.error("DETERMINISTIC CV COMPILER Error:", error);
@@ -483,59 +477,64 @@ EXAMPLES (EDGE CASES):
       ---
 
       1. FIXED STRUCTURE (NON-NEGOTIABLE):
-      The CV must always follow this exact skeleton. Do NOT change these headers or the order:
+      The CV must always follow this exact 8-pillar skeleton. Do NOT change these headers or the order:
       
+      P1. HEADER MATRIX
+      ## CONTACT MATRIX
       # [NAME]
-      **[TITLE]**
-      [Location]
-      [Phone]
-      [Email]
-      [GitHub]
-      [Portfolio]
+      **[CORE PROFESSIONAL TITLE]**
+      [Location] | [GitHub/Portfolio] | [Email] | [LinkedIn]
 
       ---
+      P2. PROFESSIONAL SUMMARY
       ## PROFESSIONAL SUMMARY
-      [Exactly 3 paragraphs summarizing the total career value]
+      INSTRUCTIONS: EXACTLY 3 PARAGRAPHS.
+      Para 1: Professional identity and years of experience.
+      Para 2: Core technical domains and architectural expertise.
+      Para 3: Career goals and industry focus.
 
       ---
+      P3. CORE TECHNICAL SKILLS
       ## CORE TECHNICAL SKILLS
-      ### [Category Name]
-      * [Skill Item]
-      (Categorize all skills from the profile)
+      Categorized skill arrays (Backend, Frontend, Cloud, etc.).
 
       ---
+      P4. PROFESSIONAL EXPERIENCE
       ## PROFESSIONAL EXPERIENCE
       ### [Role]
       **[Company] – [Location]**
       [Dates]
-      * [Measurable Achievement Bullets]
-      Impact:
-      * [Summary of results/business impact]
-      (Include all relevant roles)
+      * [Achievement bullets].
+      IMPACT:
+      * [MANDATORY IMPACT SUBSECTION]: Measurable outcomes specifically resulting from the user's intervention.
 
       ---
+      P5. SELECTED ENGINEERING PROJECTS
       ## SELECTED ENGINEERING PROJECTS
       ### [Project Name]
-      **[Stack/Technologies]**
-      * [Implementation Details]
-      Impact: (optional)
-      Keywords: [Comma separated list of tags]
+      **Tech Stack Tags: [Languages/Tools]**
+      * Technical implementation details and complexity notes.
 
       ---
+      P6. EDUCATION
       ## EDUCATION
-      [Degree] - [University] - [Date]
+      **[Degree + Classification]** - [University] - [Date]
 
       ---
+      P7. ADDITIONAL VALUE
       ## ADDITIONAL VALUE
-      * [Certifications, Languages, or Volunteer work]
+      * [Certifications]
+      * [Secondary Languages]
+      * [Volunteer Missions]
 
       ---
+      P8. AVAILABILITY
       ## AVAILABILITY
-      [1 paragraph about notice period and location preference]
+      [Notice period and location mobility.]
 
       RULES:
       - Use strictly professional, high-impact language.
-      - Follow the exact 8-pillar skeleton.
+      - Follow the exact 8-pillar skeleton with P1-P8 labels in your thought process but output standard headers in Markdown.
       - Return ONLY Markdown.
     `;
 
@@ -551,6 +550,59 @@ EXAMPLES (EDGE CASES):
     } catch (error) {
       console.error("MASTER CV GENERATOR Error:", error);
       throw new Error("Failed to generate master CV.");
+    }
+  },
+
+  async verifyCVStructure(markdown: string): Promise<{ success: boolean; score: number; logs: string[]; pillarStatus: any }> {
+    try {
+      const response = await ai.models.generateContent({
+        model: "gemini-2.0-flash",
+        contents: `
+        You are a CV Structure Audit System. 
+        Your task is to analyze the following Markdown CV against the mandatory 8-pillar structure:
+        1. Header Matrix (Contact/Links)
+        2. Professional Summary
+        3. Core Technical Skills
+        4. Professional Experience
+        5. Selected Engineering Projects
+        6. Education
+        7. Additional Value (Certs/Languages)
+        8. Availability (Notice/Location)
+
+        Analyze for:
+        - Presence of each section (P1-P8).
+        - Deterministic ordering (strictly follow the 8-pillar sequence).
+        - Paragraph Count: Section P2 MUST have exactly 3 paragraphs.
+        - Impact Subsections: Section P4 MUST have a dedicated 'IMPACT:' subsection for each role.
+        - Tech Stack Tags: Section P5 MUST use 'Tech Stack Tags:' or similar label.
+        - Bullet point density (Achievement + Tech + Impact).
+        - Markdown semantic integrity.
+
+        Return a JSON object:
+        {
+          "success": boolean,
+          "score": number (0-100),
+          "logs": string[],
+          "pillarStatus": { "P1": boolean, "P2": boolean, "P3": boolean, "P4": boolean, "P5": boolean, "P6": boolean, "P7": boolean, "P8": boolean }
+        }
+
+        CV CONTENT:
+        ${markdown}
+        `,
+        config: {
+          responseMimeType: "application/json",
+        }
+      });
+
+      return JSON.parse(response.text || "{}");
+    } catch (error) {
+      console.error("SKELETON VERIFIER Error:", error);
+      return {
+        success: false,
+        score: 0,
+        logs: ["Neural verification system offline", "Falling back to basic pattern matching"],
+        pillarStatus: {}
+      };
     }
   }
 };
