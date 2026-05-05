@@ -89,6 +89,19 @@
         "generated_at": { "type": "string", "format": "date-time" }
       },
       "required": ["uid", "job_id", "markdown_content", "tailored_to"]
+    },
+    "ChatHistory": {
+      "title": "User Chat History",
+      "description": "Context and history for AI chat assistant.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "prompt": { "type": "string" },
+        "response": { "type": "string" },
+        "type": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "prompt", "timestamp"]
     }
   },
   "firestore": {
@@ -111,6 +124,10 @@
     "/ai_logs/{logId}": {
       "schema": "AILog",
       "description": "AI interaction logs"
+    },
+    "/chat_history/{chatId}": {
+      "schema": "ChatHistory",
+      "description": "Assistant chat records"
     }
   }
 }

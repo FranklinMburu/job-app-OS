@@ -51,6 +51,13 @@ service cloud.firestore {
   match /databases/{database}/documents {
 
     // ===============================================================
+    // Global Safety Net (DENY BY DEFAULT)
+    // ===============================================================
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // ===============================================================
     // Helper Functions
     // ===============================================================
     
@@ -154,35 +161,40 @@ service cloud.firestore {
     }
 
     match /jobs/{jobId} {
-      allow read: if isDocOwner() || isAdmin();
+      allow list: if isAuthenticated() && resource.data.uid == request.auth.uid;
+      allow get: if isDocOwner() || isAdmin();
       allow create: if isAuthenticated() && isValidJob(request.resource.data);
       allow update: if isDocOwner() && isValidJob(request.resource.data);
       allow delete: if isDocOwner() || isAdmin();
     }
 
     match /applications/{appId} {
-      allow read: if isDocOwner() || isAdmin();
+      allow list: if isAuthenticated() && resource.data.uid == request.auth.uid;
+      allow get: if isDocOwner() || isAdmin();
       allow create: if isAuthenticated() && isValidApplication(request.resource.data);
       allow update: if isDocOwner() && isValidApplication(request.resource.data);
       allow delete: if isDocOwner() || isAdmin();
     }
 
     match /cv_history/{cvId} {
-      allow read: if isDocOwner() || isAdmin();
+      allow list: if isAuthenticated() && resource.data.uid == request.auth.uid;
+      allow get: if isDocOwner() || isAdmin();
       allow create: if isAuthenticated() && isValidCV(request.resource.data);
       allow update: if isDocOwner() && isValidCV(request.resource.data);
       allow delete: if isDocOwner() || isAdmin();
     }
 
     match /chat_history/{logId} {
-      allow read: if isDocOwner() || isAdmin();
+      allow list: if isAuthenticated() && resource.data.uid == request.auth.uid;
+      allow get: if isDocOwner() || isAdmin();
       allow create: if isAuthenticated() && isValidChatHistory(request.resource.data);
       allow update: if false;
       allow delete: if isDocOwner() || isAdmin();
     }
 
     match /ai_logs/{logId} {
-      allow read: if isDocOwner() || isAdmin();
+      allow list: if (isAuthenticated() && resource.data.uid == request.auth.uid) || isAdmin();
+      allow get: if isDocOwner() || isAdmin();
       allow create: if isAuthenticated();
       allow update: if false;
       allow delete: if isAdmin();
