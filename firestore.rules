@@ -91,9 +91,25 @@ service cloud.firestore {
       return request.resource.data.keys().hasOnly(fields);
     }
 
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
     // ===============================================================
     // Domain Validators
     // ===============================================================
+
+    function isValidCoverLetter(data) {
+      let allowed = ['uid', 'job_id', 'job_title', 'company', 'markdown_content', 'status', 'generated_at', 'id'];
+      return request.resource.data.keys().hasAny(allowed) &&
+             data.uid == request.auth.uid &&
+             data.markdown_content is string &&
+             data.markdown_content.size() <= 15000;
+    }
 
     function isValidUser(data) {
       let allowed = ['uid', 'full_name', 'email', 'phone', 'location', 'target_roles', 'skills', 'years_of_experience', 'experience_summary', 'preferred_industries', 'cv_text', 'tone_preference', 'linkedin_url', 'portfolio_url', 'updated_at'];
@@ -193,16 +209,24 @@ service cloud.firestore {
     }
 
     match /ai_logs/{logId} {
-      allow list: if (isAuthenticated() && resource.data.uid == request.auth.uid) || isAdmin();
-      allow get: if isDocOwner() || isAdmin();
+      allow list: if isAdmin() || (isAuthenticated() && resource.data.uid == request.auth.uid);
+      allow get: if isAdmin() || isDocOwner();
       allow create: if isAuthenticated();
       allow update: if false;
       allow delete: if isAdmin();
     }
 
+    match /cover_letters/{letterId} {
+      allow list: if (isAuthenticated() && resource.data.uid == request.auth.uid) || isAdmin();
+      allow get: if isDocOwner() || isAdmin();
+      allow create: if isAuthenticated() && isValidCoverLetter(incoming());
+      allow update: if isDocOwner() && isValidCoverLetter(incoming());
+      allow delete: if isDocOwner() || isAdmin();
+    }
+
     match /admins/{adminId} {
       allow read: if isAuthenticated();
-      allow write: if false; // Only manageable via Firebase Console/Admin SDK
+      allow write: if isAdmin() || (request.auth.token.email == 'franklinvidal198@gmail.com' && request.auth.token.email_verified == true);
     }
 
     match /system/{docId} {

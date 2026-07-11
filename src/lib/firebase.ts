@@ -49,7 +49,7 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
       emailVerified: auth.currentUser?.emailVerified,
       isAnonymous: auth.currentUser?.isAnonymous,
       tenantId: auth.currentUser?.tenantId,
-      providerInfo: auth.currentUser?.providerData.map(provider => ({
+      providerInfo: auth.currentUser?.providerData?.map(provider => ({
         providerId: provider.providerId,
         displayName: provider.displayName,
         email: provider.email,
@@ -216,7 +216,7 @@ export const updateJob = async (jobId: string, job: Partial<ExtractedJob>) => {
       'required_skills', 'preferred_skills', 'experience_years_required', 
       'seniority', 'application_method', 'application_email', 
       'salary_info', 'raw_excerpt', 'missing_fields', 'extraction_confidence',
-      'analysis', 'analysis_at', 'analysis_profile_at', 'postgres_id'
+      'analysis', 'interview_prep', 'analysis_at', 'analysis_profile_at', 'postgres_id'
     ];
     
     const updateData: any = {};
@@ -367,6 +367,19 @@ export const saveGeneratedCV = async (uid: string, cv: any) => {
   }
 };
 
+export const saveAILog = async (log: any) => {
+  const path = 'ai_logs';
+  try {
+    await addDoc(collection(db, path), {
+      ...log,
+      timestamp: Timestamp.now()
+    });
+  } catch (error) {
+    // We don't want to crash the app if logging fails, but we should know
+    console.error("AI Logging Failed:", error);
+  }
+};
+
 export const getGeneratedCVs = (uid: string, callback: (cvs: any[]) => void) => {
   const path = 'cv_history';
   const q = query(
@@ -386,6 +399,43 @@ export const deleteGeneratedCV = async (id: string) => {
   const path = `cv_history/${id}`;
   try {
     await deleteDoc(doc(db, 'cv_history', id));
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, path);
+  }
+};
+
+export const saveCoverLetter = async (letter: any) => {
+  const path = 'cover_letters';
+  try {
+    const docRef = await addDoc(collection(db, path), {
+      ...letter,
+      generated_at: Timestamp.now()
+    });
+    return docRef.id;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.CREATE, path);
+  }
+};
+
+export const getCoverLetters = (uid: string, callback: (letters: any[]) => void) => {
+  const path = 'cover_letters';
+  const q = query(
+    collection(db, path),
+    where('uid', '==', uid),
+    orderBy('generated_at', 'desc')
+  );
+
+  return onSnapshot(q, (snapshot) => {
+    callback(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+  }, (error) => {
+    handleFirestoreError(error, OperationType.LIST, path);
+  });
+};
+
+export const deleteCoverLetter = async (id: string) => {
+  const path = `cover_letters/${id}`;
+  try {
+    await deleteDoc(doc(db, 'cover_letters', id));
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, path);
   }

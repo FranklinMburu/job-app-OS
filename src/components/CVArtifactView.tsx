@@ -133,9 +133,9 @@ export const CVArtifactView: React.FC<CVArtifactViewProps> = ({
             // Force standard layout colors
             element.style.color = previewTheme === 'light' ? '#1e293b' : '#f8fafc';
             element.style.backgroundColor = previewTheme === 'light' ? '#ffffff' : '#0f172a';
-            element.style.width = '800px';
+            element.style.width = '820px';
             element.style.margin = '0 auto';
-            element.style.padding = '60px';
+            element.style.padding = '80px';
             element.style.position = 'relative';
             element.style.display = 'block';
             element.style.boxSizing = 'border-box';
@@ -144,37 +144,48 @@ export const CVArtifactView: React.FC<CVArtifactViewProps> = ({
           // Inject ONLY safe, oklch-free styles for the PDF
           const style = doc.createElement('style');
           style.innerHTML = `
+            @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap');
             * { 
               margin: 0; padding: 0; box-sizing: border-box;
-              font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif !important;
+              font-family: 'Inter', ui-sans-serif, system-ui, sans-serif !important;
               color-scheme: ${previewTheme} !important;
             }
             #cv-artifact-content {
               background-color: ${previewTheme === 'light' ? '#ffffff' : '#0f172a'} !important;
-              color: ${previewTheme === 'light' ? '#1e293b' : '#f8fafc'} !important;
-              line-height: 1.5 !important;
+              color: ${previewTheme === 'light' ? '#334155' : '#f1f5f9'} !important;
+              line-height: 1.6 !important;
               font-size: 11pt !important;
+              text-align: left !important;
             }
             h1 { 
-              font-size: 24pt !important; font-weight: 900 !important; text-transform: uppercase !important;
-              text-align: center !important; margin-bottom: 20pt !important; border-bottom: 2pt solid ${previewTheme === 'light' ? '#0f172a' : '#ffffff'} !important;
-              padding-bottom: 10pt !important; color: ${previewTheme === 'light' ? '#0f172a' : '#ffffff'} !important;
+              font-size: 28pt !important; font-weight: 900 !important; text-transform: uppercase !important;
+              text-align: center !important; margin-bottom: 24pt !important; 
+              border-bottom: 2pt solid ${previewTheme === 'light' ? '#1e293b' : '#f8fafc'} !important;
+              padding-bottom: 12pt !important; color: ${previewTheme === 'light' ? '#0f172a' : '#ffffff'} !important;
               letter-spacing: -0.05em !important;
             }
             h2 { 
-              font-size: 14pt !important; font-weight: 700 !important; text-transform: uppercase !important;
-              margin-top: 20pt !important; margin-bottom: 8pt !important; border-bottom: 1pt solid ${previewTheme === 'light' ? '#e2e8f0' : '#334155'} !important;
-              padding-bottom: 4pt !important; color: ${previewTheme === 'light' ? '#0f172a' : '#ffffff'} !important;
-              letter-spacing: 0.05em !important;
+              font-size: 13pt !important; font-weight: 700 !important; text-transform: uppercase !important;
+              margin-top: 24pt !important; margin-bottom: 8pt !important; 
+              border-bottom: 1pt solid ${previewTheme === 'light' ? '#e2e8f0' : '#334155'} !important;
+              padding-bottom: 6pt !important; color: ${previewTheme === 'light' ? '#0f172a' : '#ffffff'} !important;
+              letter-spacing: 0.1em !important;
+            }
+            h3 {
+              font-size: 12pt !important; font-weight: 700 !important; margin-top: 12pt !important; margin-bottom: 4pt !important;
+              color: ${previewTheme === 'light' ? '#0f172a' : '#ffffff'} !important;
             }
             p { margin-bottom: 10pt !important; }
-            ul, ol { margin-left: 20pt !important; margin-bottom: 10pt !important; }
-            li { margin-bottom: 4pt !important; }
+            ul, ol { margin-left: 24pt !important; margin-bottom: 12pt !important; list-style-type: square !important; }
+            li { margin-bottom: 6pt !important; padding-left: 4pt !important; }
             strong { font-weight: 700 !important; color: ${previewTheme === 'light' ? '#0f172a' : '#ffffff'} !important; }
             a { color: inherit !important; text-decoration: none !important; }
             
+            /* Mimic Tailwind Prose spacing */
+            .prose h2 + * { margin-top: 0 !important; }
+            
             /* Hide any UI elements that might have leaked in */
-            .no-print, button, nav { display: none !important; }
+            .no-print, button, nav, .edit-controls { display: none !important; }
           `;
           doc.head.appendChild(style);
         }
@@ -215,69 +226,119 @@ export const CVArtifactView: React.FC<CVArtifactViewProps> = ({
   const handleDownloadDocx = async () => {
     setDownloading('docx');
     try {
-      // Robust docx generation with basic formatting support (bold, italic)
+      // Improved docx generation with better formatting and styling
       const parseFormatting = (text: string) => {
         const parts: TextRun[] = [];
-        let currentText = text;
+        // Match bold (**text**) or italic (*text*)
         const regex = /(\*\*|__)(.*?)\1|(\*|_)(.*?)\3/g;
         let lastIndex = 0;
         let match;
 
         while ((match = regex.exec(text)) !== null) {
-          // Add plain text before match
           if (match.index > lastIndex) {
-            parts.push(new TextRun(text.substring(lastIndex, match.index)));
+            parts.push(new TextRun({ text: text.substring(lastIndex, match.index), font: "Arial" }));
           }
 
-          const isBold = !!(match[1]);
+          const isBold = !!(match[1] === '**' || match[1] === '__');
           const content = match[2] || match[4];
-          parts.push(new TextRun({ text: content, bold: isBold, italics: !isBold }));
+          parts.push(new TextRun({ 
+            text: content, 
+            bold: isBold, 
+            italics: !isBold,
+            font: "Arial",
+            size: 22
+          }));
           lastIndex = regex.lastIndex;
         }
 
         if (lastIndex < text.length) {
-          parts.push(new TextRun(text.substring(lastIndex)));
+          parts.push(new TextRun({ text: text.substring(lastIndex), font: "Arial", size: 22 }));
         }
 
-        return parts.length > 0 ? parts : [new TextRun(text)];
+        return parts.length > 0 ? parts : [new TextRun({ text, font: "Arial", size: 22 })];
       };
 
-      const sections = cv.markdown_content.split('\n\n');
+      const lines = cv.markdown_content.split('\n');
       const docChildren: any[] = [];
 
-      sections.forEach(section => {
-        if (section.startsWith('# ')) {
+      lines.forEach(line => {
+        const trimmed = line.trim();
+        if (!trimmed) {
+          // Double spacing for empty lines to separate sections better
+          docChildren.push(new Paragraph({ spacing: { before: 120, after: 120 } }));
+          return;
+        }
+
+        if (trimmed.startsWith('# ')) {
+          // P1 Header / Name - Bold, Centered, Large
           docChildren.push(new Paragraph({ 
-            children: [new TextRun({ text: section.replace('# ', '').trim(), bold: true, size: 32 })],
+            children: [new TextRun({ text: trimmed.replace('# ', '').toUpperCase(), bold: true, size: 48, font: "Calibri" })],
             alignment: AlignmentType.CENTER,
-            spacing: { after: 300 }
+            spacing: { after: 200, before: 400 },
           }));
-        } else if (section.startsWith('## ')) {
+        } else if (trimmed.startsWith('## ')) {
+          // Section Headers - Bold, All Caps, with underline effect
           docChildren.push(new Paragraph({ 
-            children: [new TextRun({ text: section.replace('## ', '').trim(), bold: true, size: 28 })],
-            spacing: { before: 400, after: 200 }
+            children: [new TextRun({ text: trimmed.replace('## ', '').toUpperCase(), bold: true, size: 28, font: "Calibri" })],
+            spacing: { before: 400, after: 120 },
+            border: { bottom: { color: "333333", space: 4, style: "single", size: 6 } },
+            heading: HeadingLevel.HEADING_2
           }));
-        } else if (section.startsWith('### ')) {
+        } else if (trimmed.startsWith('### ')) {
+          // Sub-Headers (Company/Role Name) - Bold, professional spacing
           docChildren.push(new Paragraph({ 
-            children: [new TextRun({ text: section.replace('### ', '').trim(), bold: true, size: 24 })],
-            spacing: { before: 200, after: 100 }
+            children: [new TextRun({ text: trimmed.replace('### ', ''), bold: true, size: 24, font: "Calibri" })],
+            spacing: { before: 200, after: 80 },
+            heading: HeadingLevel.HEADING_3
           }));
-        } else if (section.startsWith('- ') || section.startsWith('* ')) {
-          const lines = section.split('\n');
-          lines.forEach(line => {
-             const cleanLine = line.replace(/^[-*]\s+/, '').trim();
-             docChildren.push(new Paragraph({ 
-               children: parseFormatting(cleanLine),
-               bullet: { level: 0 } 
-             }));
-          });
+        } else if (trimmed.startsWith('- ') || trimmed.startsWith('* ')) {
+          // List Items - Justified, with proper hanging indent
+          const cleanLine = trimmed.replace(/^[-*]\s+/, '').trim();
+          docChildren.push(new Paragraph({ 
+            children: parseFormatting(cleanLine),
+            bullet: { level: 0 },
+            spacing: { after: 120, before: 60, line: 360, lineRule: "auto" },
+            alignment: AlignmentType.JUSTIFIED,
+            indent: { left: 720, hanging: 360 }
+          }));
+        } else if (trimmed.startsWith('**') && trimmed.endsWith('**') && !trimmed.includes('\n') && trimmed.length < 100) {
+          // Subtitle or contact info - Centered
+          docChildren.push(new Paragraph({ 
+            children: [new TextRun({ text: trimmed.replace(/\*\*/g, ''), bold: true, size: 22, font: "Calibri" })],
+            alignment: AlignmentType.CENTER,
+            spacing: { before: 40, after: 80 }
+          }));
+        } else if (trimmed.startsWith('---')) {
+          // Visual separator
+          docChildren.push(new Paragraph({
+            border: { bottom: { color: "CCCCCC", space: 1, style: "single", size: 6 } },
+            spacing: { before: 100, after: 100 }
+          }));
         } else {
-          docChildren.push(new Paragraph({ children: parseFormatting(section.trim()), spacing: { after: 200 } }));
+          // Standard text - Justified with professional line spacing
+          const align = trimmed.includes('|') ? AlignmentType.CENTER : AlignmentType.JUSTIFIED;
+          docChildren.push(new Paragraph({ 
+            children: parseFormatting(trimmed),
+            spacing: { after: 200, line: 360, lineRule: "auto" },
+            alignment: align
+          }));
         }
       });
 
       const doc = new Document({
-        sections: [{ children: docChildren }]
+        sections: [{ 
+          properties: {
+            page: {
+              margin: {
+                top: 720, // 0.5 inch
+                right: 720,
+                bottom: 720,
+                left: 720
+              }
+            }
+          },
+          children: docChildren 
+        }]
       });
 
       const blob = await Packer.toBlob(doc);

@@ -94,9 +94,15 @@ export type AIModelOutput = {
   location: string | null;
   employment_type: string | null;
   seniority: string | null;
+  remote_policy: string | null;
+  salary_info: string | null;
   summary: string | null;
   requirements: string[];
   skills: string[];
+  benefits: string[];
+  culture_info: string | null;
+  application_instructions: string | null;
+  deadline: string | null;
 };
 
 export interface ExtractedJob {
@@ -128,9 +134,11 @@ export interface ExtractedJob {
     status?: JobStatus;
     postgres_id?: number;
     analysis?: JobAnalysis;
+    interview_prep?: InterviewPrep;
     analysis_at?: any;
     analysis_profile_at?: any;
     captured_at?: any;
+    updated_at?: any;
     model_output?: AIModelOutput;
 }
 
@@ -163,6 +171,31 @@ export interface JobAnalysis {
     fit_summary: string;
 }
 
+export interface InterviewQuestion {
+    question: string;
+    category: "technical" | "behavioral" | "strategic";
+    suggested_answer_points: string[];
+    why_they_ask: string;
+}
+
+export interface InterviewPrep {
+    predicted_questions: InterviewQuestion[];
+    top_strengths_to_highlight: string[];
+    vulnerabilities_to_mitigate: string[];
+    suggested_questions_to_ask: string[];
+}
+
+export interface GeneratedCoverLetter {
+    id?: string;
+    uid: string;
+    job_id: string;
+    job_title: string;
+    company: string;
+    markdown_content: string;
+    generated_at: any;
+    status: "draft" | "final";
+}
+
 export interface GeneratedApplication {
     id?: string;
     uid?: string;
@@ -176,6 +209,19 @@ export interface GeneratedApplication {
     generation_confidence: ExtractionConfidence;
     applied_at?: any;
     notes?: string;
+}
+
+export interface AILog {
+    id?: string;
+    uid: string;
+    model: string;
+    action: string;
+    prompt: string;
+    response: string;
+    latency_ms: number;
+    tokens_input?: number;
+    tokens_output?: number;
+    timestamp: any;
 }
 
 export interface GeneratedCV {

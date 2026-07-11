@@ -102,6 +102,21 @@
         "timestamp": { "type": "string", "format": "date-time" }
       },
       "required": ["uid", "prompt", "timestamp"]
+    },
+    "CoverLetter": {
+      "title": "Strategic Envoy Cover Letter",
+      "description": "Tailored cover letter for a specific job.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "job_id": { "type": "string" },
+        "job_title": { "type": "string" },
+        "company": { "type": "string" },
+        "markdown_content": { "type": "string" },
+        "status": { "type": "string", "enum": ["draft", "final"] },
+        "generated_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "job_id", "markdown_content"]
     }
   },
   "firestore": {
@@ -128,6 +143,10 @@
     "/chat_history/{chatId}": {
       "schema": "ChatHistory",
       "description": "Assistant chat records"
+    },
+    "/cover_letters/{letterId}": {
+      "schema": "CoverLetter",
+      "description": "Generated cover letters"
     }
   }
 }

@@ -1,0 +1,13 @@
+{
+  "version": 2,
+  "rewrites": [
+    {
+      "source": "/backend-v2060/:path*",
+      "destination": "/api"
+    },
+    {
+      "source": "/((?!assets/|favicon.ico|manifest.json).*)",
+      "destination": "/index.html"
+    }
+  ]
+}

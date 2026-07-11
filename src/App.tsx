@@ -57,7 +57,8 @@ import {
   Eye,
   Bell,
   Terminal,
-  MessageSquare
+  MessageSquare,
+  Brain
 } from 'lucide-react';
 import { RawDataViewer } from './components/RawDataViewer';
 import { ChatHistoryView } from './components/ChatHistoryView';
@@ -66,6 +67,7 @@ import { CVArtifactView } from './components/CVArtifactView';
 import { CVHistoryView } from './components/CVHistoryView';
 import { StandaloneCVBuilder } from './components/StandaloneCVBuilder';
 import { StructureIntelligence } from './components/StructureIntelligence';
+import { CoverLetterArtifactView } from './components/CoverLetterArtifactView';
 import ReactMarkdown from 'react-markdown';
 import { 
   Sun, 
@@ -98,6 +100,7 @@ import {
   JobStatus,
   GeneratedApplication,
   GeneratedCV,
+  GeneratedCoverLetter,
   ApplyRecommendation,
   Confidence
 } from './types';
@@ -124,12 +127,15 @@ import {
   saveGeneratedCV,
   getGeneratedCVs,
   deleteGeneratedCV,
+  saveCoverLetter,
+  getCoverLetters,
+  deleteCoverLetter,
   db,
   handleFirestoreError,
   OperationType
 } from './lib/firebase';
 import { onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
-import { collection, query, where, onSnapshot, orderBy, getDoc, doc, Timestamp } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, orderBy, getDoc, doc, Timestamp, setDoc } from 'firebase/firestore';
 import { aiService } from './services/aiService';
 
 const API_BASE = '/backend-v2060';
@@ -148,7 +154,7 @@ class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { has
   render() {
     if (this.state.hasError) {
       return (
-        <div className="min-h-screen flex items-center justify-center p-6 bg-black text-white">
+        <div className="min-h-screen flex items-center justify-center p-6 bg-[#0a0c14] text-white">
           <GlassCard className="max-w-md w-full space-y-6 border-red-500/30">
             <div className="flex items-center gap-3 text-red-500">
               <AlertCircle size={32} />
@@ -180,7 +186,7 @@ export default function App() {
 }
 
 function AppContent() {
-  const [step, setStep] = useState<'landing' | 'dashboard' | 'profile' | 'capture' | 'results' | 'inbox' | 'applications' | 'logs' | 'database' | 'tracking' | 'history' | 'archive' | 'cv_history' | 'cv_artifact' | 'cv_builder'>('landing');
+  const [step, setStep] = useState<'landing' | 'dashboard' | 'profile' | 'capture' | 'results' | 'inbox' | 'applications' | 'logs' | 'database' | 'tracking' | 'history' | 'archive' | 'cv_history' | 'cv_artifact' | 'cv_builder' | 'cover_letters' | 'cover_letter_artifact'>('landing');
   const [theme, setTheme] = useState<'dark' | 'light'>('dark');
   const [loading, setLoading] = useState(false);
   const [loadingAnalysis, setLoadingAnalysis] = useState(false);
@@ -198,8 +204,21 @@ function AppContent() {
 
   useEffect(() => {
     if (user) {
+      // Check Firestore admins collection
       getDoc(doc(db, 'admins', user.uid)).then(snap => {
-        setIsAdmin(snap.exists());
+        if (snap.exists()) {
+          setIsAdmin(true);
+        } else if (user.email === 'franklinvidal198@gmail.com') {
+          // Bootstrap the first admin
+          setIsAdmin(true);
+          setDoc(doc(db, 'admins', user.uid), {
+            email: user.email,
+            assigned_at: Timestamp.now(),
+            assigned_by: 'system_bootstrap'
+          }).catch(err => {
+            console.error("Bootstrap failed:", err);
+          });
+        }
       });
     } else {
       setIsAdmin(false);
@@ -233,6 +252,7 @@ function AppContent() {
   const [analysis, setAnalysis] = useState<JobAnalysis | null>(null);
   const [generatedApp, setGeneratedApp] = useState<GeneratedApplication | null>(null);
   const [aiLogs, setAiLogs] = useState<any[]>([]);
+  const [adminList, setAdminList] = useState<any[]>([]);
   const [systemStats, setSystemStats] = useState<any>(null);
   const [systemContent, setSystemContent] = useState<any>(null);
   const [appTone, setAppTone] = useState<Tone>(Tone.professional);
@@ -248,11 +268,14 @@ function AppContent() {
   const [trackingRecords, setTrackingRecords] = useState<JobTrackingRecord[]>([]);
   const [chatHistory, setChatHistory] = useState<any[]>([]);
   const [cvHistory, setCvHistory] = useState<GeneratedCV[]>([]);
+  const [coverLetters, setCoverLetters] = useState<GeneratedCoverLetter[]>([]);
 
   const [selectedJobIds, setSelectedJobIds] = useState<string[]>([]);
   const [selectedAppIds, setSelectedAppIds] = useState<string[]>([]);
   const [inboxFilter, setInboxFilter] = useState<JobStatus | 'all'>('all');
   const [selectedCV, setSelectedCV] = useState<GeneratedCV | null>(null);
+  const [selectedCoverLetter, setSelectedCoverLetter] = useState<GeneratedCoverLetter | null>(null);
+  const [loadingCoverLetter, setLoadingCoverLetter] = useState(false);
   const [showStructureIntelligence, setShowStructureIntelligence] = useState(false);
   const [rawJobText, setRawJobText] = useState('');
 
@@ -367,7 +390,16 @@ function AppContent() {
       }, (error) => {
         handleFirestoreError(error, OperationType.GET, 'ai_logs');
       });
-      return () => unsubscribe();
+
+      const qAdmins = query(collection(db, 'admins'));
+      const unsubAdmins = onSnapshot(qAdmins, (snap) => {
+        setAdminList(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      });
+
+      return () => {
+        unsubscribe();
+        unsubAdmins();
+      };
     }
   }, [isAdmin, step]);
 
@@ -383,13 +415,13 @@ function AppContent() {
       const dayStart = new Date(d.setHours(0, 0, 0, 0)).getTime();
       const dayEnd = new Date(d.setHours(23, 59, 59, 999)).getTime();
       
-      const dayJobs = jobs.filter(j => {
+      const dayJobs = (jobs || []).filter(j => {
         const capturedAt = j.captured_at?.seconds ? j.captured_at.seconds * 1000 : 
                           j.captured_at instanceof Date ? j.captured_at.getTime() : 0;
         return capturedAt >= dayStart && capturedAt <= dayEnd;
       }).length;
       
-      const dayApps = applications.filter(a => {
+      const dayApps = (applications || []).filter(a => {
         const appliedAt = a.applied_at?.seconds ? a.applied_at.seconds * 1000 : 
                          a.applied_at instanceof Date ? a.applied_at.getTime() : 0;
         return appliedAt >= dayStart && appliedAt <= dayEnd;
@@ -404,12 +436,12 @@ function AppContent() {
     const now = new Date().getTime();
     const week = 7 * 24 * 60 * 60 * 1000;
     
-    const currentWeek = jobs.filter(item => {
+    const currentWeek = (jobs || []).filter(item => {
       const ts = (item as any).captured_at?.seconds || (item as any).applied_at?.seconds;
       return ts && (ts * 1000) > (now - week);
     }).length;
     
-    const lastWeek = jobs.filter(item => {
+    const lastWeek = (jobs || []).filter(item => {
       const ts = (item as any).captured_at?.seconds || (item as any).applied_at?.seconds;
       return ts && (ts * 1000) > (now - 2 * week) && (ts * 1000) <= (now - week);
     }).length;
@@ -423,12 +455,12 @@ function AppContent() {
     const now = new Date().getTime();
     const week = 7 * 24 * 60 * 60 * 1000;
     
-    const currentWeek = applications.filter(item => {
+    const currentWeek = (applications || []).filter(item => {
       const ts = (item as any).captured_at?.seconds || (item as any).applied_at?.seconds;
       return ts && (ts * 1000) > (now - week);
     }).length;
     
-    const lastWeek = applications.filter(item => {
+    const lastWeek = (applications || []).filter(item => {
       const ts = (item as any).captured_at?.seconds || (item as any).applied_at?.seconds;
       return ts && (ts * 1000) > (now - 2 * week) && (ts * 1000) <= (now - week);
     }).length;
@@ -497,10 +529,22 @@ function AppContent() {
       handleFirestoreError(error, OperationType.GET, 'cv_history');
     });
 
+    const letterQuery = query(
+      collection(db, 'cover_letters'),
+      where('uid', '==', user.uid),
+      orderBy('generated_at', 'desc')
+    );
+    const unsubLetters = onSnapshot(letterQuery, (snap) => {
+      setCoverLetters(snap.docs.map(d => ({ id: d.id, ...d.data() } as GeneratedCoverLetter)));
+    }, (error) => {
+      handleFirestoreError(error, OperationType.GET, 'cover_letters');
+    });
+
     return () => {
       unsubJobs();
       unsubApps();
       unsubCV();
+      unsubLetters();
     };
   }, [user]);
 
@@ -525,12 +569,14 @@ function AppContent() {
 
   // Loading messages for AI tasks
   const loadingMessages = systemContent?.loading_messages || [
-    "Analyzing neural patterns in job requirements...",
-    "Cross-referencing your skills with the future of work...",
-    "Synthesizing optimal application strategy...",
-    "Extracting core essence from the job description...",
-    "Aligning career trajectories with market demands...",
-    "Generating high-impact communication protocols..."
+    "Initializing neural OCR engines...",
+    "Scanning visual layout for critical career metadata...",
+    "Synthesizing high-fidelity job intelligence...",
+    "Assembling multi-modal data structures...",
+    "Architecting strategic application narrative...",
+    "Mapping candidate neural profile to market demands...",
+    "Optimizing career trajectory for maximum impact...",
+    "Compiling deterministic resume artifacts..."
   ];
 
   useEffect(() => {
@@ -643,7 +689,7 @@ function AppContent() {
       }
       
       // Auto-analyze if profile is ready
-      if (profile.cv_text.length > 50) {
+      if ((profile?.cv_text?.length || 0) > 50) {
         await handleAnalyze(data);
       }
       
@@ -656,7 +702,7 @@ function AppContent() {
   };
 
   const handleSynthesizeProfile = async () => {
-    if (profile.cv_text.length < 50) return;
+    if ((profile?.cv_text?.length || 0) < 50) return;
     setLoading(true);
     setError(null);
     try {
@@ -664,7 +710,7 @@ function AppContent() {
       
       // Save to History
       if (user) {
-        saveChatHistory(user.uid, `Synthesize profile from CV (${profile.cv_text.length} chars)`, data, 'synthesis', { cvLength: profile.cv_text.length });
+        saveChatHistory(user.uid, `Synthesize profile from CV (${profile?.cv_text?.length || 0} chars)`, data, 'synthesis', { cvLength: profile?.cv_text?.length || 0 });
       }
 
       setProfile(prev => ({
@@ -789,8 +835,65 @@ function AppContent() {
     }
   };
 
+  const handlePrepareInterview = async (job: ExtractedJob) => {
+    if (!profile || !user || !job.id) return;
+    setLoading(true);
+    setLoadingAnalysis(true);
+    setError(null);
+    try {
+      const data = await aiService.generateInterviewPrep(job, profile);
+      setExtractedJob(prev => prev ? { ...prev, interview_prep: data } : null);
+      
+      // Update in Firestore using helper
+      await updateJob(job.id, { interview_prep: data });
+      
+      saveChatHistory(user.uid, `Generated interview battle card for ${job.title} at ${job.company}`, data, 'interview_prep');
+    } catch (err: any) {
+      console.error(err);
+      setError("Failed to generate interview prep.");
+    } finally {
+      setLoading(false);
+      setLoadingAnalysis(false);
+    }
+  };
+
+  const handleGenerateCoverLetter = async (job: ExtractedJob) => {
+    if (!profile || !user || !job.id) return;
+    setLoadingCoverLetter(true);
+    try {
+      const data = await aiService.generateCoverLetter(job, profile);
+      
+      const letterData = {
+        uid: user.uid,
+        job_id: job.id,
+        job_title: job.title,
+        company: job.company,
+        markdown_content: data.markdown_content,
+        status: "final" as const
+      };
+
+      const letterId = await saveCoverLetter(letterData);
+      
+      saveChatHistory(user.uid, `Generated strategic cover letter for ${job.title} at ${job.company}`, data, 'cover_letter');
+
+      const completeLetter: GeneratedCoverLetter = {
+        ...letterData,
+        id: letterId,
+        generated_at: new Date()
+      };
+
+      setSelectedCoverLetter(completeLetter);
+      setStep('cover_letter_artifact');
+    } catch (err: any) {
+      console.error(err);
+      setError("Failed to generate strategic envoy.");
+    } finally {
+      setLoadingCoverLetter(false);
+    }
+  };
   const handleAnalyze = async (job: ExtractedJob) => {
     if (loadingAnalysis) return;
+    if (!profile) return;
     
     // Check for cached analysis
     const isProfileUnchanged = job.analysis_profile_at && profile.updated_at && 
@@ -866,7 +969,7 @@ function AppContent() {
     if (!job || !profile || !user) return;
     
     // Gap Analysis: Ensure base profile exists
-    if (!profile.cv_text || profile.cv_text.length < 50) {
+    if (!profile?.cv_text || (profile.cv_text?.length || 0) < 50) {
       setError("Incomplete profile. Please add your professional background in the Profile section before tailoring a CV.");
       return;
     }
@@ -966,7 +1069,7 @@ function AppContent() {
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
               <div>
                 <h2 className="text-3xl font-black tracking-tight uppercase">COMMAND <span className="text-neon-blue">CENTER</span></h2>
-                <p className="text-white/40 text-sm italic">Authenticated secure node processing {jobs.length} operations.</p>
+                <p className="text-white/40 text-sm italic">Authenticated secure node processing {(jobs || []).length} operations.</p>
               </div>
               <div className="flex gap-3">
                 <NeonButton variant="blue" onClick={() => setStep('capture')}>
@@ -978,10 +1081,22 @@ function AppContent() {
             {/* Metrics Grid */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
               {[
-                { label: "Total Captured", value: jobs.length, icon: <Inbox className="text-neon-blue" />, trend: jobTrend, color: "blue", action: () => setStep('inbox') },
-                { label: "Compiled Artifacts", value: cvHistory.length, icon: <Cpu className="text-neon-purple" />, trend: "Compiler Results", color: "purple", action: () => setStep('cv_history') },
-                { label: "Follow-ups Needed", value: jobs.filter(j => j.status === JobStatus.follow_up).length, icon: <Mail className="text-neon-orange" />, trend: "Active", color: "orange", action: () => { setInboxFilter(JobStatus.follow_up); setStep('inbox'); } },
-                { label: "Profile Status", value: `${Math.min(100, Math.round((profile.cv_text.length / 500) * 100))}%`, icon: <User className="text-neon-blue" />, trend: profile.cv_text.length >= 500 ? "Sync Complete" : "Profile Incomplete", color: "blue", action: () => setStep('profile') }
+                { label: "Total Captured", value: (jobs || []).length, icon: <Inbox className="text-neon-blue" />, trend: jobTrend, color: "blue", action: () => setStep('inbox') },
+                { 
+                  label: "Stale Leads", 
+                  value: (jobs || []).filter(j => {
+                    const lastUpdate = j.updated_at?.seconds ? j.updated_at.seconds * 1000 : 
+                                      j.captured_at?.seconds ? j.captured_at.seconds * 1000 : 0;
+                    return (new Date().getTime() - lastUpdate) > 5 * 24 * 60 * 60 * 1000 && 
+                           j.status !== JobStatus.archived && j.status !== JobStatus.rejected;
+                  }).length, 
+                  icon: <Clock className="text-neon-orange" />, 
+                  trend: "Action Required", 
+                  color: "orange", 
+                  action: () => { setInboxFilter(null); setStep('inbox'); } 
+                },
+                { label: "Follow-ups Needed", value: (jobs || []).filter(j => j.status === JobStatus.follow_up).length, icon: <Mail className="text-neon-orange" />, trend: "Active", color: "orange", action: () => { setInboxFilter(JobStatus.follow_up); setStep('inbox'); } },
+                { label: "Profile Status", value: `${Math.min(100, Math.round(((profile?.cv_text?.length || 0) / 500) * 100))}%`, icon: <User className="text-neon-blue" />, trend: (profile?.cv_text?.length || 0) >= 500 ? "Sync Complete" : "Profile Incomplete", color: "blue", action: () => setStep('profile') }
               ].map((metric, i) => (
                 <GlassCard 
                   key={i} 
@@ -1003,8 +1118,55 @@ function AppContent() {
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+              {/* Pipeline Conversion Funnel */}
+              <GlassCard className="lg:col-span-4 p-8 space-y-6 border-white/5">
+                <h3 className="text-sm font-black tracking-[0.2em] uppercase text-white/40 flex items-center gap-2">
+                  <Target size={16} className="text-neon-purple" /> PIPELINE CONVERSION
+                </h3>
+                <div className="space-y-4">
+                  {[
+                    { label: 'Captured', icon: <Inbox size={14}/>, color: 'blue', value: (jobs || []).length },
+                    { label: 'Applied', icon: <Send size={14}/>, color: 'purple', value: (jobs || []).filter(j => j.status === JobStatus.applied || j.status === JobStatus.apply_now).length },
+                    { label: 'Interview', icon: <Users size={14}/>, color: 'orange', value: (jobs || []).filter(j => j.status === JobStatus.interview).length },
+                    { label: 'Offer', icon: <Zap size={14}/>, color: 'green', value: (jobs || []).filter(j => j.status === JobStatus.offer).length },
+                  ].map((stage, i, arr) => {
+                    const prevValue = i > 0 ? arr[i-1].value : stage.value;
+                    const conversion = prevValue > 0 ? Math.round((stage.value / prevValue) * 100) : 0;
+                    const totalMax = Math.max(...arr.map(a => a.value), 1);
+                    const widthPercent = (stage.value / totalMax) * 100;
+                    
+                    return (
+                      <div key={stage.label} className="space-y-2">
+                        <div className="flex justify-between items-end">
+                          <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-white/60">
+                            {stage.icon} {stage.label}
+                          </div>
+                          <div className="text-xs font-mono font-bold">{stage.value}</div>
+                        </div>
+                        <div className="h-1.5 w-full bg-white/5 rounded-full overflow-hidden">
+                          <motion.div 
+                            initial={{ width: 0 }}
+                            animate={{ width: `${widthPercent}%` }}
+                            className={cn(
+                              "h-full rounded-full",
+                              stage.color === 'blue' ? 'bg-neon-blue' :
+                              stage.color === 'purple' ? 'bg-neon-purple' :
+                              stage.color === 'orange' ? 'bg-neon-orange' : 'bg-green-400'
+                            )}
+                          />
+                        </div>
+                        {i > 0 && stage.value > 0 && (
+                          <p className="text-[9px] text-white/20 italic text-right">↳ {conversion}% conversion from previous stage</p>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </GlassCard>
+
               {/* Activity Chart */}
               <GlassCard className="lg:col-span-8 p-8 space-y-6 border-white/5 hover:border-white/10 transition-colors">
+
                 <div className="flex items-center justify-between">
                   <h3 className="text-sm font-black tracking-[0.2em] uppercase text-white/40 flex items-center gap-2">
                     <TrendingUp size={16} className="text-neon-blue" /> ARCHIVE PERFORMANCE
@@ -1076,7 +1238,7 @@ function AppContent() {
                     <button onClick={() => setStep('inbox')} className="text-[9px] font-black text-neon-blue uppercase tracking-widest">Show All</button>
                   </div>
                   <div className="space-y-4">
-                    {jobs.slice(0, 3).map(job => (
+                    {jobs?.slice(0, 3).map(job => (
                       <div 
                         key={job.id} 
                         className="p-3 rounded-xl bg-white/5 border border-white/5 flex items-center gap-3 group cursor-pointer hover:border-white/20 transition-all" 
@@ -1269,7 +1431,7 @@ function AppContent() {
                        <Database size={12} /> JOB REQUIREMENTS
                     </h3>
                     <div className="space-y-3">
-                      {extractedJob.requirements.map((req, i) => (
+                      {extractedJob?.requirements?.map((req, i) => (
                         <div key={i} className="flex gap-3 items-start group">
                           <div className="w-1.5 h-1.5 rounded-full bg-neon-blue/20 mt-1.5 group-hover:bg-neon-blue" />
                           <p className="text-xs text-white/50 group-hover:text-white transition-colors">{req}</p>
@@ -1282,7 +1444,7 @@ function AppContent() {
                        <Cpu size={12} /> KEY SKILLS
                     </h3>
                     <div className="flex flex-wrap gap-2">
-                      {extractedJob.required_skills.map((skill, i) => (
+                      {extractedJob?.required_skills?.map((skill, i) => (
                         <span key={i} className="px-3 py-1.5 rounded bg-white/5 border border-white/5 text-[9px] font-black text-white/40 uppercase">
                           {skill}
                         </span>
@@ -1355,6 +1517,111 @@ function AppContent() {
               </div>
 
               <div className="lg:col-span-5 space-y-6">
+                {/* Interview Battle Card */}
+                {extractedJob.interview_prep ? (
+                  <GlassCard glow="orange" className="p-8 space-y-8">
+                    <div className="flex items-center justify-between">
+                      <h3 className="text-xl font-black uppercase tracking-tight italic flex items-center gap-2">
+                        <Brain size={20} className="text-neon-orange" /> INTERVIEW BATTLE CARD
+                      </h3>
+                      <div className="px-3 py-1 rounded-full bg-neon-orange/10 border border-neon-orange/30 text-neon-orange text-[9px] font-black uppercase tracking-widest">
+                        Strategic Intel
+                      </div>
+                    </div>
+
+                    <div className="space-y-8">
+                      <div className="space-y-4">
+                        <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-white/30">Predicted Questions</h4>
+                        <div className="space-y-4">
+                          {(extractedJob.interview_prep.predicted_questions || []).map((q, i) => (
+                            <div key={i} className="p-4 rounded-xl bg-white/5 border border-white/5 space-y-3">
+                              <div className="flex justify-between items-start">
+                                <p className="text-sm font-bold text-white/90">{q.question}</p>
+                                <span className="text-[8px] font-black uppercase tracking-widest px-2 py-0.5 rounded bg-white/10 text-white/50">{q.category}</span>
+                              </div>
+                              <div className="space-y-2">
+                                <p className="text-[10px] uppercase font-black text-white/20 tracking-widest">Strategic Response</p>
+                                <ul className="space-y-1">
+                                  {(q.suggested_answer_points || []).map((p, idx) => (
+                                    <li key={idx} className="text-xs text-white/60 italic flex gap-2">
+                                      <span className="text-neon-orange">•</span> {p}
+                                    </li>
+                                  ))}
+                                </ul>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-3">
+                          <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-white/30">Core Strengths</h4>
+                          <div className="space-y-2">
+                            {(extractedJob.interview_prep.top_strengths_to_highlight || []).map((s, i) => (
+                              <div key={i} className="p-3 rounded-lg bg-green-500/5 border border-green-500/10 text-[11px] text-green-400/80 italic font-medium">
+                                {s}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                        <div className="space-y-3">
+                          <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-white/30">Objection Handling</h4>
+                          <div className="space-y-2">
+                            {(extractedJob.interview_prep.vulnerabilities_to_mitigate || []).map((v, i) => (
+                              <div key={i} className="p-3 rounded-lg bg-red-500/5 border border-red-500/10 text-[11px] text-red-400/80 italic font-medium">
+                                {v}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="pt-4 border-t border-white/5 space-y-3">
+                         <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-white/30">Reverse Questions (To Ask)</h4>
+                         <div className="flex flex-wrap gap-2">
+                            {(extractedJob.interview_prep.suggested_questions_to_ask || []).map((q, i) => (
+                              <div key={i} className="px-3 py-2 rounded-lg bg-neon-blue/5 border border-neon-blue/20 text-[10px] font-bold text-neon-blue">
+                                "{q}"
+                              </div>
+                            ))}
+                         </div>
+                      </div>
+                    </div>
+                  </GlassCard>
+                ) : (
+                  analysis && (
+                    <GlassCard className="p-8 border-dashed border-white/10 flex flex-col items-center justify-center space-y-4 text-center">
+                      <div className="w-16 h-16 rounded-full bg-white/5 flex items-center justify-center text-white/20">
+                        <Brain size={32} />
+                      </div>
+                      <div className="space-y-2">
+                        <h4 className="text-sm font-black uppercase tracking-tight">Interview Pipeline Detected</h4>
+                        <p className="text-[10px] text-white/40 uppercase tracking-widest max-w-[200px]">Generate a strategic battle card to dominate the interview phase.</p>
+                      </div>
+                      <NeonButton variant="orange" onClick={() => handlePrepareInterview(extractedJob)}>Generate Battle Card</NeonButton>
+                    </GlassCard>
+                  )
+                )}
+
+                {/* Cover Letter Generator */}
+                <GlassCard className="p-8 border-dashed border-white/10 flex flex-col items-center justify-center space-y-4 text-center">
+                  <div className="w-16 h-16 rounded-full bg-white/5 flex items-center justify-center text-neon-blue">
+                    <FileText size={32} />
+                  </div>
+                  <div className="space-y-2">
+                    <h4 className="text-sm font-black uppercase tracking-tight">STRATEGIC ENVOY</h4>
+                    <p className="text-[10px] text-white/40 uppercase tracking-widest max-w-[200px]">Draft a high-impact cover letter tailored for {extractedJob.company}.</p>
+                  </div>
+                  <NeonButton 
+                    variant="blue" 
+                    onClick={() => handleGenerateCoverLetter(extractedJob)}
+                    isLoading={loadingCoverLetter}
+                  >
+                    Generate Enclosure
+                  </NeonButton>
+                </GlassCard>
+
                 {/* AI Fit Analysis */}
                 <GlassCard glow={analysis?.verdict === Verdict.relevant ? 'blue' : analysis?.verdict === Verdict.maybe ? 'orange' : 'red'} className="p-8 space-y-8">
                   <div className="flex items-center justify-between">
@@ -1406,7 +1673,7 @@ function AppContent() {
                         <div className="space-y-3">
                           <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-white/30">Strategic Strengths</h4>
                           <div className="space-y-2">
-                            {analysis.reasons.map((reason, i) => (
+                            {analysis?.reasons?.map((reason: string, i: number) => (
                               <div key={i} className="flex gap-2 text-xs text-green-400/80 italic font-medium">
                                 <span className="text-neon-blue">•</span> {reason}
                               </div>
@@ -1414,11 +1681,11 @@ function AppContent() {
                           </div>
                         </div>
 
-                        {analysis.gaps.length > 0 && (
+                        {(analysis?.gaps?.length ?? 0) > 0 && (
                           <div className="space-y-3">
                             <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-white/30">Detected Anomalies</h4>
                             <div className="space-y-2">
-                              {analysis.gaps.map((gap, i) => (
+                              {analysis?.gaps?.map((gap: string, i: number) => (
                                 <div key={i} className="flex gap-2 text-xs text-orange-500/80 italic font-medium">
                                   <span className="text-neon-orange">•</span> {gap}
                                 </div>
@@ -1530,10 +1797,10 @@ function AppContent() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-white/5">
-                    {trackingRecords.length === 0 ? (
+                    {(trackingRecords || []).length === 0 ? (
                       <tr><td colSpan={4} className="p-12 text-center text-white/20 uppercase text-[10px] font-black">No external tracking data available.</td></tr>
                     ) : (
-                      trackingRecords.map((rec) => (
+                      (trackingRecords || []).map((rec) => (
                         <tr key={rec.id} className="hover:bg-white/5 transition-colors">
                           <td className="p-4 font-mono text-[10px] text-white/40">{rec.id}</td>
                           <td className="p-4">
@@ -1599,7 +1866,55 @@ function AppContent() {
           />
         );
       case 'logs':
-        return <AILogs aiLogs={aiLogs} isAdmin={isAdmin} />;
+        return <AILogs aiLogs={aiLogs} isAdmin={isAdmin} adminList={adminList} />;
+      case 'cover_letters':
+        return (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-8">
+            <div className="flex items-center justify-between">
+              <h2 className="text-3xl font-black tracking-tighter uppercase italic leading-none">STRATEGIC <span className="text-neon-blue">ENVOYS</span></h2>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {coverLetters.map((letter) => (
+                <GlassCard key={letter.id} className="p-6 space-y-4 hover:border-neon-blue/30 transition-all group cursor-pointer" onClick={() => { setSelectedCoverLetter(letter); setStep('cover_letter_artifact'); }}>
+                   <div className="flex items-start justify-between">
+                      <div className="p-2 rounded bg-white/5 text-white/20 group-hover:text-neon-blue">
+                        <FileText size={20} />
+                      </div>
+                      <span className="text-[8px] font-black text-white/20 uppercase bg-white/5 px-2 py-0.5 rounded">
+                        {new Date(letter.generated_at?.seconds * 1000).toLocaleDateString()}
+                      </span>
+                   </div>
+                   <div>
+                      <h3 className="text-sm font-black uppercase truncate">{letter.company}</h3>
+                      <p className="text-[9px] text-white/40 font-bold uppercase tracking-widest truncate">{letter.job_title}</p>
+                   </div>
+                   <div className="pt-4 border-t border-white/5 flex items-center justify-between">
+                      <span className="text-[9px] font-black text-neon-blue uppercase">View Strategist</span>
+                      <ArrowUpRight size={14} className="text-white/10 group-hover:text-neon-blue" />
+                   </div>
+                </GlassCard>
+              ))}
+              {coverLetters.length === 0 && (
+                <div className="col-span-full p-20 text-center border-2 border-dashed border-white/5 rounded-3xl">
+                   <p className="text-[10px] font-black text-white/20 uppercase tracking-[0.4em]">No strategic envoys deployed yet.</p>
+                </div>
+              )}
+            </div>
+          </motion.div>
+        );
+      case 'cover_letter_artifact':
+        return selectedCoverLetter ? (
+          <CoverLetterArtifactView 
+            letter={selectedCoverLetter}
+            onClose={() => setStep('cover_letters')}
+            onDelete={async () => {
+              if (confirm('Delete this envoy?')) {
+                await deleteCoverLetter(selectedCoverLetter.id!);
+                setStep('cover_letters');
+              }
+            }}
+          />
+        ) : null;
       case 'archive':
         return (
           <ExtractionAuditView 
@@ -1671,7 +1986,7 @@ function AppContent() {
     if (!job) return null;
 
     return (
-      <div className="fixed inset-0 z-[70] bg-black/90 backdrop-blur-xl flex items-center justify-center p-6">
+      <div className="fixed inset-0 z-[70] bg-[#0a0c10]/95 backdrop-blur-xl flex items-center justify-center p-6">
         <GlassCard className="w-full max-w-4xl max-h-[80vh] overflow-hidden flex flex-col p-0 border-white/10">
           <div className="p-6 border-b border-white/10 flex items-center justify-between bg-white/5">
             <div className="flex items-center gap-4">
@@ -1707,12 +2022,12 @@ function AppContent() {
             </div>
 
             <div className="space-y-4">
-              {cvHistory.filter(h => h.job_id === viewingJobIdForArtifacts).length === 0 ? (
+              {(cvHistory || []).filter(h => h.job_id === viewingJobIdForArtifacts).length === 0 ? (
                 <div className="text-center py-12 border-2 border-dashed border-white/5 rounded-2xl">
                   <p className="text-white/20 text-xs uppercase tracking-widest font-black">No artifacts generated for this node.</p>
                 </div>
               ) : (
-                cvHistory
+                (cvHistory || [])
                   .filter(h => h.job_id === viewingJobIdForArtifacts)
                   .sort((a, b) => {
                     const dateA = a.generated_at?.seconds ? a.generated_at.seconds : (a.generated_at instanceof Date ? a.generated_at.getTime() / 1000 : 0);
@@ -1729,7 +2044,7 @@ function AppContent() {
                           <Cpu size={18} />
                         </div>
                         <div>
-                          <p className="text-xs font-bold text-white/80">Version {cvHistory.filter(h => h.job_id === viewingJobIdForArtifacts).length - idx}</p>
+                          <p className="text-xs font-bold text-white/80">Version {(cvHistory || []).filter(h => h.job_id === viewingJobIdForArtifacts).length - idx}</p>
                           <p className="text-[10px] text-white/40 font-mono tracking-tighter">
                             {cv.generated_at?.seconds ? new Date(cv.generated_at.seconds * 1000).toLocaleString() : 'Recent Encryption'}
                           </p>
@@ -1819,7 +2134,7 @@ function AppContent() {
         /* Enterprise Layout */
         <div className="flex h-screen overflow-hidden">
           {/* Sidebar Navigation */}
-          <aside className="w-64 border-r border-white/5 bg-[#0a0a0a] flex flex-col z-40 relative">
+          <aside className="w-64 border-r border-white/5 bg-[#0d0f17] flex flex-col z-40 relative">
             <div className="p-6 flex items-center gap-3 border-b border-white/5">
               <div className="w-8 h-8 rounded-lg bg-neon-blue/10 flex items-center justify-center">
                 <Terminal size={18} className="text-neon-blue" />
@@ -1832,7 +2147,7 @@ function AppContent() {
                 <p className="px-3 pb-2 text-[10px] font-black tracking-[0.2em] text-white/20 uppercase">Core Systems</p>
                 {[
                   { id: 'dashboard', label: 'Command Center', icon: <LayoutDashboard size={18} /> },
-                  { id: 'inbox', label: 'Operations', icon: <Inbox size={18} />, count: jobs.length },
+                  { id: 'inbox', label: 'Operations', icon: <Inbox size={18} />, count: (jobs || []).length },
                 ].map(item => (
                   <button
                     key={item.id}
@@ -1860,7 +2175,9 @@ function AppContent() {
                   { id: 'capture', label: 'Add New Job', icon: <Search size={18} /> },
                   { id: 'cv_builder', label: 'CV Builder', icon: <PenTool size={18} /> },
                   { id: 'profile', label: 'My Profile', icon: <User size={18} /> },
-                  { id: 'cv_history', label: 'Compiler Archive', icon: <Cpu size={18} />, count: cvHistory.length },
+                  { id: 'cv_history', label: 'Compiler Archive', icon: <Cpu size={18} />, count: (cvHistory || []).length },
+                  { id: 'cover_letters', label: 'Strategic Envoys', icon: <FileText size={18} />, count: (coverLetters || []).length },
+                  ...(isAdmin ? [{ id: 'logs', label: 'Audit Logs', icon: <Activity size={18} /> }] : []),
                 ].map(item => (
                   <button
                     key={item.id}
@@ -1880,11 +2197,11 @@ function AppContent() {
               <div className="space-y-1">
                 <p className="px-3 pb-2 text-[10px] font-black tracking-[0.2em] text-white/20 uppercase">Archive</p>
                 {[
-                  { id: 'applications', label: 'My Applications', icon: <History size={18} />, count: applications.length },
-                  { id: 'tracking', label: 'Status Tracker', icon: <Activity size={18} />, count: trackingRecords.length },
+                  { id: 'applications', label: 'My Applications', icon: <History size={18} />, count: (applications || []).length },
+                  { id: 'tracking', label: 'Status Tracker', icon: <Activity size={18} />, count: (trackingRecords || []).length },
                   { id: 'database', label: 'Job Database', icon: <Database size={18} /> },
                   { id: 'archive', label: 'Extraction Audit', icon: <ShieldCheck size={18} /> },
-                  { id: 'history', label: 'Activity Logs', icon: <MessageSquare size={18} />, count: chatHistory.length },
+                  { id: 'history', label: 'Activity Logs', icon: <MessageSquare size={18} />, count: (chatHistory || []).length },
                 ].map(item => (
                   <button
                     key={item.id}
@@ -1912,7 +2229,7 @@ function AppContent() {
             </div>
           </aside>
 
-          <div className="flex-1 flex flex-col min-w-0 bg-[#050505]">
+          <div className="flex-1 flex flex-col min-w-0 bg-[#0a0c14]">
             <header className="h-16 border-b border-white/5 px-8 flex items-center justify-between backdrop-blur-xl z-30">
               <div className="flex items-center gap-4">
                 <div className="flex items-center gap-2 text-[10px] uppercase tracking-widest font-black text-white/30">
@@ -2097,7 +2414,20 @@ const JobsListView = ({
                     {selectedIds.includes(job.id) ? <CheckSquare size={18} className="text-neon-blue" /> : <Square size={18} />}
                   </button>
                   <div className="space-y-1">
-                    <h3 className="font-bold text-sm leading-tight uppercase tracking-tight group-hover:text-neon-blue transition-colors">{job.title}</h3>
+                    <div className="flex items-center gap-2">
+                      <h3 className="font-bold text-sm leading-tight uppercase tracking-tight group-hover:text-neon-blue transition-colors">{job.title}</h3>
+                      {(() => {
+                        const lastUpdate = job.updated_at?.seconds ? job.updated_at.seconds * 1000 : 
+                                          job.captured_at?.seconds ? job.captured_at.seconds * 1000 : 0;
+                        const isStale = (new Date().getTime() - lastUpdate) > 5 * 24 * 60 * 60 * 1000 && 
+                                       job.status !== JobStatus.archived && job.status !== JobStatus.rejected;
+                        return isStale && (
+                          <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-orange-500/10 border border-orange-500/30 text-[8px] font-black text-orange-400 uppercase animate-pulse">
+                            <Clock size={10} /> Stale
+                          </div>
+                        );
+                      })()}
+                    </div>
                     <p className="text-[10px] text-white/40 font-bold uppercase tracking-widest">{job.company}</p>
                   </div>
                 </div>
@@ -2127,7 +2457,7 @@ const JobsListView = ({
 
               <div className="mt-6 pt-4 border-t border-white/5 flex gap-2">
                 <NeonButton variant="blue" className="flex-1 !py-2 !text-[9px]" onClick={() => onViewJob(job)}>Analyze</NeonButton>
-                <NeonButton variant="purple" className="flex-1 !py-2 !text-[9px]" onClick={() => onViewJobArtifacts(job.id)}>CVs ({cvHistory.filter((cv: any) => cv.job_id === job.id).length})</NeonButton>
+                <NeonButton variant="purple" className="flex-1 !py-2 !text-[9px]" onClick={() => onViewJobArtifacts(job.id)}>CVs ({(cvHistory || []).filter((cv: any) => cv.job_id === job.id).length})</NeonButton>
                 <button 
                   onClick={() => onViewRaw(job)}
                   className="p-2 rounded bg-white/5 text-white/40 hover:text-neon-blue transition-all"
@@ -2239,7 +2569,7 @@ const UserProfileView = ({ profile, onSave, onSyncWithCV }: any) => {
               <NeonButton onClick={addSkill} variant="purple">Add</NeonButton>
             </div>
             <div className="flex flex-wrap gap-2">
-              {localProfile.skills.map((s: string, i: number) => (
+              {localProfile?.skills?.map((s: string, i: number) => (
                 <span key={`${s}-${i}`} className="px-3 py-1.5 rounded-full bg-neon-purple/10 border border-neon-purple/20 text-neon-purple text-[10px] font-bold uppercase flex items-center gap-2">
                   {s}
                   <X size={10} className="cursor-pointer hover:text-white" onClick={() => setLocalProfile({...localProfile, skills: localProfile.skills.filter((sk: string) => sk !== s)})} />
@@ -2259,7 +2589,7 @@ const UserProfileView = ({ profile, onSave, onSyncWithCV }: any) => {
               onChange={e => setLocalProfile({...localProfile, cv_text: e.target.value})}
             />
             <div className="pt-4 flex justify-between items-center">
-              <p className="text-[9px] text-white/30 uppercase tracking-widest font-black">Characters: {localProfile.cv_text.length}</p>
+              <p className="text-[9px] text-white/30 uppercase tracking-widest font-black">Characters: {localProfile?.cv_text?.length || 0}</p>
               <button 
                 onClick={() => onSyncWithCV(localProfile.cv_text)}
                 className="text-[10px] font-black text-neon-orange uppercase tracking-widest hover:underline"
@@ -2361,37 +2691,146 @@ const DatabaseManager = ({ jobs, cvHistory, updateJobStatus, handleDeleteJob, se
   );
 };
 
-const AILogs = ({ aiLogs, isAdmin }: any) => {
+const AILogs = ({ aiLogs, isAdmin, adminList }: any) => {
   if (!isAdmin) return null;
+  const [newAdminId, setNewAdminId] = useState('');
+  const [newAdminEmail, setNewAdminEmail] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+
+  const handleAddAdmin = async () => {
+    if (!newAdminId || !newAdminEmail) return;
+    setIsLoading(true);
+    try {
+      const { setDoc, doc: fsDoc, Timestamp } = await import('firebase/firestore');
+      await setDoc(fsDoc(db, 'admins', newAdminId.trim()), {
+        email: newAdminEmail.trim(),
+        assigned_at: Timestamp.now(),
+        assigned_by: auth.currentUser?.email || 'unknown'
+      });
+      setNewAdminId('');
+      setNewAdminEmail('');
+    } catch (err: any) {
+      console.error(err);
+      alert("Failed to add admin: " + err.message);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleRemoveAdmin = async (id: string) => {
+    if (id === auth.currentUser?.uid) {
+      alert("Cannot remove yourself.");
+      return;
+    }
+    if (!confirm("Are you sure?")) return;
+    try {
+      const { deleteDoc, doc: fsDoc } = await import('firebase/firestore');
+      await deleteDoc(fsDoc(db, 'admins', id));
+    } catch (err: any) {
+      console.error(err);
+      alert("Failed to remove admin.");
+    }
+  };
+
   return (
-    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-8">
-      <h2 className="text-3xl font-black tracking-tighter uppercase italic leading-none">Activity <span className="text-neon-blue">Logs</span></h2>
-      <GlassCard className="overflow-hidden border-white/5">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse text-[11px]">
-            <thead>
-               <tr className="bg-white/5 text-[9px] font-black uppercase tracking-[0.2em] text-white/30">
-                 <th className="p-4">Timestamp</th>
-                 <th className="p-4">Operation</th>
-                 <th className="p-4">Model</th>
-                 <th className="p-4">Latency</th>
-                 <th className="p-4">Resources</th>
-               </tr>
-            </thead>
-            <tbody className="divide-y divide-white/5 font-mono">
-              {aiLogs.map((log: any, i: number) => (
-                <tr key={log.id || i} className="hover:bg-white/5 transition-colors">
-                  <td className="p-4 text-white/40">{log.timestamp?.toDate().toLocaleString()}</td>
-                  <td className="p-4 font-black uppercase text-neon-blue">{log.action}</td>
-                  <td className="p-4 text-white/60">{log.model}</td>
-                  <td className="p-4 text-white/40">{log.latency_ms}ms</td>
-                  <td className="p-4 text-white/30">{log.tokens_input}/{log.tokens_output}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-12">
+      <div className="flex items-center justify-between">
+        <h2 className="text-3xl font-black tracking-tighter uppercase italic leading-none">Activity <span className="text-neon-blue">Logs</span></h2>
+        <div className="flex items-center gap-2 px-3 py-1 rounded bg-neon-blue/10 border border-neon-blue/30 text-[9px] font-black uppercase tracking-widest text-neon-blue">
+          <ShieldCheck size={10} /> Authorized Access
         </div>
-      </GlassCard>
+      </div>
+
+      {/* Admin Management Section */}
+      <section className="space-y-6">
+        <h3 className="text-sm font-black tracking-[0.2em] uppercase text-white/40 flex items-center gap-2">
+          <Users size={16} className="text-neon-purple" /> AUTH CONTROL
+        </h3>
+        
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+          <GlassCard className="lg:col-span-1 p-6 space-y-4 border-white/5">
+            <h4 className="text-[10px] font-black uppercase tracking-widest text-white/60">Register New Admin</h4>
+            <div className="space-y-3">
+              <FuturisticInput 
+                placeholder="User UID" 
+                value={newAdminId} 
+                onChange={(e) => setNewAdminId(e.target.value)} 
+              />
+              <FuturisticInput 
+                placeholder="User Email" 
+                value={newAdminEmail} 
+                onChange={(e) => setNewAdminEmail(e.target.value)} 
+              />
+              <NeonButton 
+                variant="purple" 
+                className="w-full text-[10px] font-black uppercase" 
+                onClick={handleAddAdmin}
+                isLoading={isLoading}
+              >
+                Assign Privileges
+              </NeonButton>
+              <p className="text-[8px] text-white/20 italic">Note: User must be registered in the system first.</p>
+            </div>
+          </GlassCard>
+
+          <GlassCard className="lg:col-span-2 p-6 space-y-4 border-white/5">
+             <h4 className="text-[10px] font-black uppercase tracking-widest text-white/60">Current Administrators</h4>
+             <div className="space-y-2">
+                {adminList?.map((admin: any) => (
+                  <div key={admin.id} className="flex items-center justify-between p-3 rounded-lg bg-white/5 border border-white/5 hover:border-white/10 transition-colors">
+                    <div className="flex flex-col">
+                      <span className="text-[11px] font-bold text-white/90">{admin.email}</span>
+                      <span className="text-[8px] font-mono text-white/30 uppercase">{admin.id}</span>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <span className="text-[8px] font-black uppercase tracking-widest text-white/20">
+                        Since: {admin.assigned_at?.toDate().toLocaleDateString()}
+                      </span>
+                      <button 
+                        onClick={() => handleRemoveAdmin(admin.id)}
+                        className="p-1.5 rounded bg-red-500/10 text-red-500 hover:bg-red-500/20 transition-colors"
+                      >
+                        <Trash2 size={12} />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+             </div>
+          </GlassCard>
+        </div>
+      </section>
+
+      <section className="space-y-6">
+        <h3 className="text-sm font-black tracking-[0.2em] uppercase text-white/40 flex items-center gap-2">
+          <Activity size={16} className="text-neon-blue" /> RECENT OPERATIONS
+        </h3>
+        <GlassCard className="overflow-hidden border-white/5">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse text-[11px]">
+              <thead>
+                 <tr className="bg-white/5 text-[9px] font-black uppercase tracking-[0.2em] text-white/30">
+                   <th className="p-4">Timestamp</th>
+                   <th className="p-4">Operation</th>
+                   <th className="p-4">Model</th>
+                   <th className="p-4">Latency</th>
+                   <th className="p-4">Resources</th>
+                 </tr>
+              </thead>
+              <tbody className="divide-y divide-white/5 font-mono">
+                {aiLogs?.map((log: any, i: number) => (
+                  <tr key={log.id || i} className="hover:bg-white/5 transition-colors">
+                    <td className="p-4 text-white/40">{log.timestamp?.toDate().toLocaleString()}</td>
+                    <td className="p-4 font-black uppercase text-neon-blue">{log.action}</td>
+                    <td className="p-4 text-white/60">{log.model}</td>
+                    <td className="p-4 text-white/40">{log.latency_ms}ms</td>
+                    <td className="p-4 text-white/30">{log.tokens_input}/{log.tokens_output}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </GlassCard>
+      </section>
     </motion.div>
   );
 };
