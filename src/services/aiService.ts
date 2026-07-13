@@ -65,6 +65,42 @@ const executeAI = async (
   }
 };
 
+const cleanMarkdownOutput = (text: string): string => {
+  if (!text) return "";
+  let cleaned = text.trim();
+  
+  // Strip code block wrappers if present (e.g. ```markdown ... ```)
+  const codeBlockRegex = /^```(?:markdown)?\s*\n([\s\S]*?)\n\s*```$/i;
+  const match = cleaned.match(codeBlockRegex);
+  if (match) {
+    cleaned = match[1].trim();
+  }
+  
+  // Check if there is introductory conversational text before the first markdown heading (#, ##, etc.) or contact block.
+  // We match standard markdown headings, a bold block at the start of a line, or typical Name/Contact labels.
+  const headingMatch = cleaned.match(/^(?:#+\s|\*\*[\w\s]+\*\*|Name:)/m);
+  if (headingMatch && headingMatch.index !== undefined && headingMatch.index > 0) {
+    const preamble = cleaned.substring(0, headingMatch.index).trim();
+    // Discard conversational preambles
+    if (preamble.length > 10 && (
+      preamble.toLowerCase().includes("tailor") ||
+      preamble.toLowerCase().includes("here is") ||
+      preamble.toLowerCase().includes("cv") ||
+      preamble.toLowerCase().includes("resume") ||
+      preamble.toLowerCase().includes("suitability") ||
+      preamble.toLowerCase().includes("focus") ||
+      preamble.toLowerCase().includes("highlight") ||
+      preamble.toLowerCase().includes("preamble") ||
+      preamble.toLowerCase().includes("builder") ||
+      preamble.split(/\s+/).length > 5
+    )) {
+      cleaned = cleaned.substring(headingMatch.index).trim();
+    }
+  }
+  
+  return cleaned;
+};
+
 export const aiService = {
   async extractJob(content: string, sourceType: SourceType): Promise<{ model_output: AIModelOutput, normalized_job: ExtractedJob }> {
     const prompt = `Extraction: Job Board Intelligence & OCR Engine
@@ -218,20 +254,67 @@ OUTPUT SCHEMA:
   },
 
   async generateTailoredCV(job: ExtractedJob, userProfile: UserProfile): Promise<{ markdown_content: string }> {
-    const prompt = `TASK: TAILOR CV. JOB: ${job.title}. MASTER CV: ${userProfile.cv_text}`;
+    const prompt = `
+CANDIDATE SUITABILITY & KEYWORDS:
+Job Title: ${job.title}
+Company: ${job.company}
+Required Skills: ${job.required_skills?.join(", ") || "None specified"}
+Job Summary: ${job.summary || "None specified"}
+Job Description Text: ${job.raw_content || ""}
+
+MASTER CV DATA:
+${userProfile.cv_text}
+
+MISSION:
+Carefully analyze the job details above and customize the master CV to align perfectly with this role. Adjust accomplishments, highlight the most relevant skills, and optimize the ordering and phrasing of bullet points to match the job's keyword density while preserving absolute truthfulness.
+
+STRICT OUTPUT CONSTRAINTS:
+1. Output ONLY the raw Markdown of the final tailored resume.
+2. DO NOT include any conversational preamble, introduction, explanation, greeting, or conversational chatter (e.g. do NOT say "To tailor your CV for...", "Here is...", etc.).
+3. DO NOT include any note or explanation at the end.
+4. Begin directly with the resume header (typically "# Name" or "Name").
+5. The resume MUST be professional, ATS-optimized, and use clean markdown syntax.
+`;
     try {
-      const response = await executeAI("generateTailoredCV", "gemini-3.5-flash", prompt);
-      return { markdown_content: response.text || "" };
+      const response = await executeAI("generateTailoredCV", "gemini-3.5-flash", prompt, {
+        systemInstruction: "You are an elite, professional resume-writing system. You only output raw, ready-to-use resume markdown. You are strictly forbidden from writing any introductory greetings, transition sentences, commentary, explanations, pre-text, or post-text. You must output the resume directly.",
+        temperature: 0.3
+      });
+      const cleaned = cleanMarkdownOutput(response.text || "");
+      return { markdown_content: cleaned };
     } catch (error) {
       throw new Error("Failed tailored CV.");
     }
   },
 
   async generateMasterCV(userProfile: UserProfile): Promise<{ markdown_content: string }> {
-    const prompt = `TASK: MASTER CV. PROFILE: ${userProfile.experience_summary}`;
+    const prompt = `
+CANDIDATE INFORMATION:
+Name: ${userProfile.full_name}
+Title: ${userProfile.target_roles?.join(", ") || "Software Engineer"}
+Location: ${userProfile.location || "Nairobi, Kenya"}
+Skills: ${userProfile.skills?.join(", ") || ""}
+Experience Summary / Raw Text:
+${userProfile.experience_summary || ""}
+Original CV:
+${userProfile.cv_text || ""}
+
+MISSION:
+Synthesize a highly polished, comprehensive, and chronologically organized Master CV in beautiful markdown format using all available user profile and experience data. Ensure achievements are quantified (using impact/metrics where possible).
+
+STRICT OUTPUT CONSTRAINTS:
+1. Output ONLY the raw Markdown of the final Master CV.
+2. DO NOT include any conversational preamble, introduction, explanation, greeting, or conversational chatter (e.g. do NOT say "To create your Master CV...", "Here is...", etc.).
+3. DO NOT include any note or explanation at the end.
+4. Begin directly with the resume header.
+`;
     try {
-      const response = await executeAI("generateMasterCV", "gemini-3.5-flash", prompt);
-      return { markdown_content: response.text || "" };
+      const response = await executeAI("generateMasterCV", "gemini-3.5-flash", prompt, {
+        systemInstruction: "You are an elite, professional resume-writing system. You only output raw, ready-to-use resume markdown. You are strictly forbidden from writing any introductory greetings, transition sentences, commentary, explanations, pre-text, or post-text. You must output the resume directly.",
+        temperature: 0.3
+      });
+      const cleaned = cleanMarkdownOutput(response.text || "");
+      return { markdown_content: cleaned };
     } catch (error) {
       throw new Error("Failed master CV.");
     }

@@ -384,9 +384,7 @@ function AppContent() {
       setUser(u);
       setIsAuthReady(true);
       if (u) {
-        if (step === 'landing') {
-          setStep('dashboard');
-        }
+        setStep((prev) => (prev === 'landing' ? 'dashboard' : prev));
         // Check if user has seen onboarding tutorial
         const hasSeenTutorial = localStorage.getItem(`has_seen_tutorial_${u.uid}`);
         if (!hasSeenTutorial) {
@@ -398,7 +396,7 @@ function AppContent() {
       }
     });
     return () => unsubscribe();
-  }, [step]);
+  }, []);
 
   useEffect(() => {
     setSelectedJobIds([]);
