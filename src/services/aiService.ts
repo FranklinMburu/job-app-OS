@@ -99,7 +99,7 @@ OUTPUT SCHEMA:
         contents = [{ text: prompt }, { text: `INPUT CONTENT:\n${content.substring(0, 30000)}` }];
       }
 
-      const response = await executeAI("extractJob", "gemini-3-flash-preview", contents, {
+      const response = await executeAI("extractJob", "gemini-3.5-flash", contents, {
         responseMimeType: "application/json",
         temperature: 0.1
       });
@@ -157,7 +157,7 @@ OUTPUT SCHEMA:
   async analyzeJob(job: ExtractedJob, userProfile: UserProfile): Promise<JobAnalysis> {
     const prompt = `TASK: FIT ANALYSIS. JSON ONLY. JOB: ${JSON.stringify(job)}. CANDIDATE: ${JSON.stringify(userProfile)}`;
     try {
-      const response = await executeAI("analyzeJob", "gemini-3-flash-preview", prompt, {
+      const response = await executeAI("analyzeJob", "gemini-3.5-flash", prompt, {
         responseMimeType: "application/json",
         temperature: 0.2
       });
@@ -170,7 +170,7 @@ OUTPUT SCHEMA:
   async generateInterviewPrep(job: ExtractedJob, userProfile: UserProfile): Promise<any> {
     const prompt = `TASK: INTERVIEW PREP. JSON ONLY. JOB: ${JSON.stringify(job)}. CANDIDATE: ${JSON.stringify(userProfile)}`;
     try {
-      const response = await executeAI("generateInterviewPrep", "gemini-3-flash-preview", prompt, {
+      const response = await executeAI("generateInterviewPrep", "gemini-3.5-flash", prompt, {
         responseMimeType: "application/json",
         temperature: 0.4
       });
@@ -183,7 +183,7 @@ OUTPUT SCHEMA:
   async generateApplication(job: ExtractedJob, analysis: JobAnalysis, userProfile: UserProfile, outputMode: OutputMode, tone: Tone): Promise<GeneratedApplication> {
     const prompt = `TASK: GEN APP. JSON ONLY. JOB: ${job.title}. USER: ${userProfile.full_name}`;
     try {
-      const response = await executeAI("generateApplication", "gemini-3-flash-preview", prompt, {
+      const response = await executeAI("generateApplication", "gemini-3.5-flash", prompt, {
         responseMimeType: "application/json",
         temperature: 0.7
       });
@@ -196,7 +196,7 @@ OUTPUT SCHEMA:
   async generateFollowUp(job: ExtractedJob, userProfile: UserProfile, originalApp: GeneratedApplication): Promise<GeneratedApplication> {
     const prompt = `TASK: FOLLOW UP. JSON ONLY.`;
     try {
-      const response = await executeAI("generateFollowUp", "gemini-3-flash-preview", prompt, {
+      const response = await executeAI("generateFollowUp", "gemini-3.5-flash", prompt, {
         responseMimeType: "application/json",
       });
       return JSON.parse(response.text || "{}");
@@ -208,7 +208,7 @@ OUTPUT SCHEMA:
   async synthesizeProfile(cvText: string): Promise<Partial<UserProfile>> {
     const prompt = `TASK: SYNTHESIZE PROFILE. JSON ONLY. CV: ${cvText.substring(0, 10000)}`;
     try {
-      const response = await executeAI("synthesizeProfile", "gemini-3-flash-preview", prompt, {
+      const response = await executeAI("synthesizeProfile", "gemini-3.5-flash", prompt, {
         responseMimeType: "application/json",
       });
       return JSON.parse(response.text || "{}");
@@ -220,7 +220,7 @@ OUTPUT SCHEMA:
   async generateTailoredCV(job: ExtractedJob, userProfile: UserProfile): Promise<{ markdown_content: string }> {
     const prompt = `TASK: TAILOR CV. JOB: ${job.title}. MASTER CV: ${userProfile.cv_text}`;
     try {
-      const response = await executeAI("generateTailoredCV", "gemini-3-flash-preview", prompt);
+      const response = await executeAI("generateTailoredCV", "gemini-3.5-flash", prompt);
       return { markdown_content: response.text || "" };
     } catch (error) {
       throw new Error("Failed tailored CV.");
@@ -230,7 +230,7 @@ OUTPUT SCHEMA:
   async generateMasterCV(userProfile: UserProfile): Promise<{ markdown_content: string }> {
     const prompt = `TASK: MASTER CV. PROFILE: ${userProfile.experience_summary}`;
     try {
-      const response = await executeAI("generateMasterCV", "gemini-3-flash-preview", prompt);
+      const response = await executeAI("generateMasterCV", "gemini-3.5-flash", prompt);
       return { markdown_content: response.text || "" };
     } catch (error) {
       throw new Error("Failed master CV.");
@@ -274,7 +274,7 @@ STRICT CONSTRAINTS:
 - Format: Markdown only.
 `;
     try {
-      const response = await executeAI("generateCoverLetter", "gemini-3-flash-preview", prompt, { temperature: 0.6 });
+      const response = await executeAI("generateCoverLetter", "gemini-3.5-flash", prompt, { temperature: 0.6 });
       return { markdown_content: response.text || "Letter failed." };
     } catch (error) {
       throw new Error("Failed cover letter.");
@@ -284,7 +284,7 @@ STRICT CONSTRAINTS:
   async verifyCVStructure(markdown: string): Promise<any> {
     const prompt = `TASK: VERIFY CV JSON. CV: ${markdown}`;
     try {
-      const response = await executeAI("verifyCVStructure", "gemini-2.0-flash", prompt, { responseMimeType: "application/json" });
+      const response = await executeAI("verifyCVStructure", "gemini-3.5-flash", prompt, { responseMimeType: "application/json" });
       return JSON.parse(response.text || "{}");
     } catch (error) {
       return { success: false, score: 0, logs: ["Offline"], pillarStatus: {} };

@@ -24,21 +24,21 @@ export const StructureIntelligence: React.FC<StructureIntelligenceProps> = ({ on
   const [activeStep, setActiveStep] = useState(0);
   
   const pillars = [
-    { title: "Header Matrix", desc: "Identity, Location, and Secure Linkages (GitHub/Portfolio).", id: "P1" },
-    { title: "Professional Summary", desc: "Exactly 3 paragraphs of high-density career value tailored to the role.", id: "P2" },
-    { title: "Core Technical Skills", desc: "Categorized skill arrays (Backend, Frontend, Cloud, etc.).", id: "P3" },
-    { title: "Professional Experience", desc: "Measurable achievement bullets with mandatory Impact subsections.", id: "P4" },
-    { title: "Selected Engineering Projects", desc: "Technical implementation details and tech stack tags.", id: "P5" },
-    { title: "Education", desc: "Academic credentials and degree classifications.", id: "P6" },
-    { title: "Additional Value", desc: "Certifications, secondary languages, and volunteer missions.", id: "P7" },
-    { title: "Availability", desc: "Final terminal state: Notice period and location mobility.", id: "P8" }
+    { title: "Contact Header", desc: "Your name, contact details, and link to professional profiles (LinkedIn/GitHub).", id: "P1" },
+    { title: "Professional Summary", desc: "A brief, powerful summary explaining your core skills and suitability for the role.", id: "P2" },
+    { title: "Core Skills", desc: "Categorized skills (e.g. Backend, Frontend, Tools) for quick scanning.", id: "P3" },
+    { title: "Work Experience", desc: "Detailed achievements with measurable outcomes and impact.", id: "P4" },
+    { title: "Key Projects", desc: "Notable professional or personal projects showing relevant technology stacks.", id: "P5" },
+    { title: "Education", desc: "Academic degrees, certifications, or major course of study.", id: "P6" },
+    { title: "Certifications & Languages", desc: "Professional credentials and secondary languages.", id: "P7" },
+    { title: "Availability & Details", desc: "Notice period, work authorization, or relocation preferences.", id: "P8" }
   ];
 
   const verificationPoints = [
-    { point: "Deterministic Ordering", icon: <Layers size={14} />, id: "ordering" },
+    { point: "Logical Section Ordering", icon: <Layers size={14} />, id: "ordering" },
     { point: "Action Verb Frequency", icon: <Zap size={14} />, id: "verbs" },
-    { point: "Impact Multiplier Verification", icon: <Cpu size={14} />, id: "impact" },
-    { point: "Markdown Semantic Integrity", icon: <Code2 size={14} />, id: "semantic" }
+    { point: "Outcome & Impact Metrics", icon: <Cpu size={14} />, id: "impact" },
+    { point: "ATS-Friendly Formatting", icon: <Code2 size={14} />, id: "semantic" }
   ];
 
   const [testResult, setTestResult] = useState<any>(null);
@@ -73,8 +73,8 @@ export const StructureIntelligence: React.FC<StructureIntelligenceProps> = ({ on
               <ShieldCheck size={24} />
             </div>
             <div>
-              <h2 className="text-xl font-black uppercase italic tracking-tighter">Structure <span className="text-neon-blue">Intelligence</span></h2>
-              <p className="text-[10px] text-white/40 uppercase tracking-[0.2em] font-bold">8-Pillar Non-Negotiable Skeleton Verification</p>
+              <h2 className="text-xl font-black uppercase italic tracking-tighter">Resume <span className="text-neon-blue">Format Checker</span></h2>
+              <p className="text-[10px] text-white/40 uppercase tracking-[0.2em] font-bold">8-Step Resume Layout & Structure Verification</p>
             </div>
           </div>
           <button onClick={onClose} className="p-2 rounded-full hover:bg-white/5 text-white/40 hover:text-white transition-all">
@@ -87,10 +87,10 @@ export const StructureIntelligence: React.FC<StructureIntelligenceProps> = ({ on
           <div className="lg:col-span-7 p-8 space-y-8 border-r border-white/5">
             <div className="space-y-4">
               <h3 className="text-xs font-black uppercase tracking-widest text-neon-blue flex items-center gap-2">
-                <Binary size={16} /> Neural Architecture Definition
+                <Binary size={16} /> Resume Layout Guidelines
               </h3>
               <p className="text-white/40 text-[11px] leading-relaxed font-medium">
-                The system enforces a rigid geometric structure to ensure maximum parseability by both human recruiters and Applicant Tracking Systems (ATS). This structure is non-negotiable for system-generated artifacts.
+                To ensure your resume stands out and can be read perfectly by both human recruiters and Applicant Tracking Systems (ATS), we verify it against industry-standard structural rules.
               </p>
             </div>
 
@@ -126,9 +126,9 @@ export const StructureIntelligence: React.FC<StructureIntelligenceProps> = ({ on
                 <Cpu size={20} />
               </div>
               <div className="space-y-1 text-xs">
-                <p className="font-black uppercase tracking-widest text-neon-blue">Verification Logic</p>
+                <p className="font-black uppercase tracking-widest text-neon-blue">AI Checker Logic</p>
                 <p className="text-white/50 leading-relaxed italic">
-                  Every CV generated undergoes a dual-pass AI validation to ensure bullet point impact density, action verb strength, and structural integrity.
+                  Every resume generated undergoes an automated verification to check bullet point strength, action verb density, and clear formatting.
                 </p>
               </div>
             </div>
@@ -138,18 +138,18 @@ export const StructureIntelligence: React.FC<StructureIntelligenceProps> = ({ on
           <div className="lg:col-span-5 p-8 space-y-8 flex flex-col bg-white/[0.02]">
             <div className="space-y-4">
               <h3 className="text-xs font-black uppercase tracking-widest text-white flex items-center gap-2">
-                <FileSearch size={16} /> Integrity Verification Center
+                <FileSearch size={16} /> ATS Checklist & Score
               </h3>
               <p className="text-white/30 text-[10px] uppercase font-black tracking-widest">
-                Force dynamic alignment check on captured data.
+                Analyze your document against layout guidelines.
               </p>
             </div>
 
             <div className="flex-1 space-y-6">
               <div className="p-6 rounded-2xl bg-black/40 border border-white/5 space-y-4">
                 <div className="flex items-center justify-between">
-                  <span className="text-[9px] font-black uppercase tracking-widest text-white/40">Real-time Checkpoints</span>
-                  <span className="text-[9px] font-black uppercase tracking-widest text-neon-blue animate-pulse">Scanning Enabled</span>
+                  <span className="text-[9px] font-black uppercase tracking-widest text-white/40">Layout Checkpoints</span>
+                  <span className="text-[9px] font-black uppercase tracking-widest text-neon-blue animate-pulse">Checker Active</span>
                 </div>
                 <div className="space-y-3">
                   {verificationPoints.map((point) => (
@@ -175,7 +175,7 @@ export const StructureIntelligence: React.FC<StructureIntelligenceProps> = ({ on
                       className="absolute inset-0 flex flex-col items-center justify-center gap-4"
                     >
                       <div className="w-12 h-12 rounded-full border-2 border-neon-blue/20 border-t-neon-blue animate-spin" />
-                      <p className="text-[10px] font-black text-neon-blue uppercase animate-pulse">Running Neural Alignment Test...</p>
+                      <p className="text-[10px] font-black text-neon-blue uppercase animate-pulse">Analyzing Resume Structure...</p>
                     </motion.div>
                   ) : testResult ? (
                     <motion.div 
@@ -188,7 +188,7 @@ export const StructureIntelligence: React.FC<StructureIntelligenceProps> = ({ on
                         <div className="flex items-center gap-2">
                           {testResult.success ? <CheckCircle2 className="text-green-400" size={16} /> : <AlertCircle className="text-red-400" size={16} />}
                           <span className={`text-[10px] font-black uppercase ${testResult.success ? 'text-green-400' : 'text-red-400'}`}>
-                            {testResult.success ? 'Structure Verified' : 'Alignment Error Detected'}
+                            {testResult.success ? 'Format Approved' : 'Format Improvements Suggested'}
                           </span>
                         </div>
                         <span className="text-[20px] font-black font-mono text-white">{testResult.score}%</span>
@@ -206,7 +206,7 @@ export const StructureIntelligence: React.FC<StructureIntelligenceProps> = ({ on
                     <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-center">
                       <Binary size={40} className="text-white/5" />
                       <p className="text-[10px] text-white/20 uppercase font-black">No test data processed.</p>
-                      <p className="text-[8px] text-white/10 uppercase font-medium">Capture a job or open an artifact to run verification.</p>
+                      <p className="text-[8px] text-white/10 uppercase font-medium">Add some resume content to run a structural verification check.</p>
                     </div>
                   )}
                 </AnimatePresence>
@@ -220,13 +220,13 @@ export const StructureIntelligence: React.FC<StructureIntelligenceProps> = ({ on
                 onClick={performVerification}
                 isLoading={isVerifying}
               >
-                <Zap size={14} className="mr-2" /> EXECUTE VERIFICATION SUITE
+                <Zap size={14} className="mr-2" /> RUN FORMAT CHECK
               </NeonButton>
               <button 
                 onClick={onClose}
                 className="w-full py-2 text-[8px] font-black uppercase tracking-widest text-white/20 hover:text-white transition-colors"
               >
-                BACK TO OPERATIONS
+                CLOSE CHECKER
               </button>
             </div>
           </div>

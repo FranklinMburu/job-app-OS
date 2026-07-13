@@ -74,7 +74,8 @@ import {
   Moon,
   Layout,
   FileCode,
-  FileDown
+  FileDown,
+  HelpCircle
 } from 'lucide-react';
 import { 
   BarChart, 
@@ -109,6 +110,9 @@ import { GlassCard, NeonButton, FuturisticInput, FuturisticTextarea, cn } from '
 import { 
   auth, 
   signIn, 
+  signInWithEmail,
+  signUpWithEmail,
+  resetPassword,
   signOut, 
   saveUserProfile, 
   getUserProfile, 
@@ -201,6 +205,19 @@ function AppContent() {
   const [user, setUser] = useState<FirebaseUser | null>(null);
   const [isAuthReady, setIsAuthReady] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
+
+  // Email Auth Modal State
+  const [showEmailAuthModal, setShowEmailAuthModal] = useState(false);
+  const [authEmail, setAuthEmail] = useState('');
+  const [authPassword, setAuthPassword] = useState('');
+  const [isSignUp, setIsSignUp] = useState(false);
+  const [emailAuthError, setEmailAuthError] = useState<string | null>(null);
+  const [emailAuthLoading, setEmailAuthLoading] = useState(false);
+
+  // Onboarding Tutorial State
+  const [showTutorial, setShowTutorial] = useState(false);
+  const [tutorialStep, setTutorialStep] = useState(0);
+  const [dontShowAgain, setDontShowAgain] = useState(false);
 
   useEffect(() => {
     if (user) {
@@ -370,6 +387,12 @@ function AppContent() {
         if (step === 'landing') {
           setStep('dashboard');
         }
+        // Check if user has seen onboarding tutorial
+        const hasSeenTutorial = localStorage.getItem(`has_seen_tutorial_${u.uid}`);
+        if (!hasSeenTutorial) {
+          setShowTutorial(true);
+          setTutorialStep(0);
+        }
       } else {
         setStep('landing');
       }
@@ -478,6 +501,54 @@ function AppContent() {
       setError(err.message || "Failed to connect neural link.");
     } finally {
       setAuthLoading(false);
+    }
+  };
+
+  const handleEmailAuthSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!authEmail || !authPassword) {
+      setEmailAuthError("Please fill out all fields.");
+      return;
+    }
+    setEmailAuthLoading(true);
+    setEmailAuthError(null);
+    try {
+      if (isSignUp) {
+        await signUpWithEmail(authEmail, authPassword);
+      } else {
+        await signInWithEmail(authEmail, authPassword);
+      }
+      setShowEmailAuthModal(false);
+      setAuthEmail('');
+      setAuthPassword('');
+    } catch (err: any) {
+      console.error(err);
+      let errMsg = err.message || "Authentication failed.";
+      if (err.code === 'auth/invalid-email') errMsg = "Invalid email address.";
+      if (err.code === 'auth/user-not-found' || err.code === 'auth/wrong-password') errMsg = "Invalid email or password.";
+      if (err.code === 'auth/email-already-in-use') errMsg = "Email already in use.";
+      if (err.code === 'auth/weak-password') errMsg = "Password must be at least 6 characters.";
+      setEmailAuthError(errMsg);
+    } finally {
+      setEmailAuthLoading(false);
+    }
+  };
+
+  const handlePasswordResetSubmit = async () => {
+    if (!authEmail) {
+      setEmailAuthError("Please enter your email address first.");
+      return;
+    }
+    setEmailAuthLoading(true);
+    setEmailAuthError(null);
+    try {
+      await resetPassword(authEmail);
+      setEmailAuthError("Password reset link sent to your email!");
+    } catch (err: any) {
+      console.error(err);
+      setEmailAuthError(err.message || "Failed to send reset email.");
+    } finally {
+      setEmailAuthLoading(false);
     }
   };
   useEffect(() => {
@@ -886,7 +957,7 @@ function AppContent() {
       setStep('cover_letter_artifact');
     } catch (err: any) {
       console.error(err);
-      setError("Failed to generate strategic envoy.");
+      setError("Failed to generate cover letter.");
     } finally {
       setLoadingCoverLetter(false);
     }
@@ -1049,6 +1120,69 @@ function AppContent() {
   };
 
   // Render Helpers
+  const tutorialDecks = [
+    {
+      title: "WELCOME TO CAREER-OS",
+      subtitle: "YOUR INTELLIGENT CAREER ASSISTANT",
+      description: "Welcome to CareerOS, an intelligent platform designed to organize, optimize, and streamline your job search. By leveraging Gemini AI, CareerOS acts as your personal job-seeking assistant, helping you customize applications and prepare for interviews with high efficiency.",
+      highlights: [
+        "Track your entire application progress from saved jobs to final offers.",
+        "Instantly tailor resumes and cover letters for specific job postings.",
+        "Prepare for interviews with predicted questions and recommended answers.",
+        "Securely sync your profile and application history to the cloud."
+      ],
+      accentColor: "text-neon-blue",
+      bgColor: "bg-neon-blue/5",
+      borderColor: "border-neon-blue/20",
+      icon: <Brain size={48} className="text-neon-blue animate-pulse" />
+    },
+    {
+      title: "ADD NEW JOBS",
+      subtitle: "AI JOB PARSING & REQUIREMENTS ANALYSIS",
+      description: "Easily save new job openings you're interested in by entering a description or uploading a document. Our AI will automatically analyze the details and extract key requirements.",
+      highlights: [
+        "Extract salary ranges, job titles, work style (remote/hybrid), and company details.",
+        "Identify key technical and soft skills requested by the employer.",
+        "Save complete job postings in one organized list.",
+        "Generate immediate feedback on how well your profile matches the role."
+      ],
+      accentColor: "text-neon-purple",
+      bgColor: "bg-neon-purple/5",
+      borderColor: "border-neon-purple/20",
+      icon: <Search size={48} className="text-neon-purple" />
+    },
+    {
+      title: "AI CAREER TOOLS",
+      subtitle: "TAILORED RESUMES & COVER LETTERS",
+      description: "Generate custom, job-specific application documents instantly. Use AI to tailor your resume and draft professional cover letters that grab recruiters' attention.",
+      highlights: [
+        "Tailored Resume: Build customized resume content optimized for job keywords.",
+        "Cover Letters: Draft personalized cover letters in professional, confident, or concise tones.",
+        "Interview Prep Guide: Prepare with customized practice questions and bullet points.",
+        "Profile Sync: Automatically keep your primary skills and experience up to date."
+      ],
+      accentColor: "text-neon-teal",
+      bgColor: "bg-neon-teal/5",
+      borderColor: "border-neon-teal/20",
+      icon: <Terminal size={48} className="text-neon-teal" />
+    },
+    {
+      title: "APPLICATION TRACKER",
+      subtitle: "TRACK STATUS & PRESERVE HISTORIES",
+      description: "Keep complete control over all your job search activities. Monitor your funnel metrics and keep your notes updated throughout the process.",
+      highlights: [
+        "Dashboard Metrics: Get quick insights on active applications and follow-ups.",
+        "Funnel Ratios: Visualize conversion rates from initial save to final offer.",
+        "Applied Jobs List: Manage stages, filters, searches, and delete records anytime.",
+        "Saved Resumes & Letters: Review your complete history of generated application drafts."
+      ],
+      accentColor: "text-neon-orange",
+      bgColor: "bg-neon-orange/5",
+      borderColor: "border-neon-orange/20",
+      icon: <Activity size={48} className="text-neon-orange" />
+    }
+  ];
+
   const renderBadge = (text: string, color: string = 'blue') => (
     <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border border-${color}-500/30 bg-${color}-500/10 text-${color}-400`}>
       {text}
@@ -1068,12 +1202,12 @@ function AppContent() {
           >
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
               <div>
-                <h2 className="text-3xl font-black tracking-tight uppercase">COMMAND <span className="text-neon-blue">CENTER</span></h2>
-                <p className="text-white/40 text-sm italic">Authenticated secure node processing {(jobs || []).length} operations.</p>
+                <h2 className="text-3xl font-black tracking-tight uppercase">JOB <span className="text-neon-blue">DASHBOARD</span></h2>
+                <p className="text-white/40 text-sm font-medium">Welcome back! Manage your job applications and resume optimizations here.</p>
               </div>
               <div className="flex gap-3">
                 <NeonButton variant="blue" onClick={() => setStep('capture')}>
-                  <Plus size={18} className="mr-2" /> New Capture
+                  <Plus size={18} className="mr-2" /> Add New Job
                 </NeonButton>
               </div>
             </div>
@@ -1081,9 +1215,9 @@ function AppContent() {
             {/* Metrics Grid */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
               {[
-                { label: "Total Captured", value: (jobs || []).length, icon: <Inbox className="text-neon-blue" />, trend: jobTrend, color: "blue", action: () => setStep('inbox') },
+                { label: "Saved Jobs", value: (jobs || []).length, icon: <Inbox className="text-neon-blue" />, trend: jobTrend, color: "blue", action: () => setStep('inbox') },
                 { 
-                  label: "Stale Leads", 
+                  label: "Inactive Leads", 
                   value: (jobs || []).filter(j => {
                     const lastUpdate = j.updated_at?.seconds ? j.updated_at.seconds * 1000 : 
                                       j.captured_at?.seconds ? j.captured_at.seconds * 1000 : 0;
@@ -1091,12 +1225,12 @@ function AppContent() {
                            j.status !== JobStatus.archived && j.status !== JobStatus.rejected;
                   }).length, 
                   icon: <Clock className="text-neon-orange" />, 
-                  trend: "Action Required", 
+                  trend: "Needs Action", 
                   color: "orange", 
                   action: () => { setInboxFilter(null); setStep('inbox'); } 
                 },
                 { label: "Follow-ups Needed", value: (jobs || []).filter(j => j.status === JobStatus.follow_up).length, icon: <Mail className="text-neon-orange" />, trend: "Active", color: "orange", action: () => { setInboxFilter(JobStatus.follow_up); setStep('inbox'); } },
-                { label: "Profile Status", value: `${Math.min(100, Math.round(((profile?.cv_text?.length || 0) / 500) * 100))}%`, icon: <User className="text-neon-blue" />, trend: (profile?.cv_text?.length || 0) >= 500 ? "Sync Complete" : "Profile Incomplete", color: "blue", action: () => setStep('profile') }
+                { label: "Profile Completeness", value: `${Math.min(100, Math.round(((profile?.cv_text?.length || 0) / 500) * 100))}%`, icon: <User className="text-neon-blue" />, trend: (profile?.cv_text?.length || 0) >= 500 ? "Sync Complete" : "Profile Incomplete", color: "blue", action: () => setStep('profile') }
               ].map((metric, i) => (
                 <GlassCard 
                   key={i} 
@@ -1121,11 +1255,11 @@ function AppContent() {
               {/* Pipeline Conversion Funnel */}
               <GlassCard className="lg:col-span-4 p-8 space-y-6 border-white/5">
                 <h3 className="text-sm font-black tracking-[0.2em] uppercase text-white/40 flex items-center gap-2">
-                  <Target size={16} className="text-neon-purple" /> PIPELINE CONVERSION
+                  <Target size={16} className="text-neon-purple" /> APPLICATION FUNNEL
                 </h3>
                 <div className="space-y-4">
                   {[
-                    { label: 'Captured', icon: <Inbox size={14}/>, color: 'blue', value: (jobs || []).length },
+                    { label: 'Saved', icon: <Inbox size={14}/>, color: 'blue', value: (jobs || []).length },
                     { label: 'Applied', icon: <Send size={14}/>, color: 'purple', value: (jobs || []).filter(j => j.status === JobStatus.applied || j.status === JobStatus.apply_now).length },
                     { label: 'Interview', icon: <Users size={14}/>, color: 'orange', value: (jobs || []).filter(j => j.status === JobStatus.interview).length },
                     { label: 'Offer', icon: <Zap size={14}/>, color: 'green', value: (jobs || []).filter(j => j.status === JobStatus.offer).length },
@@ -1169,7 +1303,7 @@ function AppContent() {
 
                 <div className="flex items-center justify-between">
                   <h3 className="text-sm font-black tracking-[0.2em] uppercase text-white/40 flex items-center gap-2">
-                    <TrendingUp size={16} className="text-neon-blue" /> ARCHIVE PERFORMANCE
+                    <TrendingUp size={16} className="text-neon-blue" /> JOB SEARCH ACTIVITY
                   </h3>
                 </div>
                 <div className="h-[300px] w-full">
@@ -1418,7 +1552,7 @@ function AppContent() {
                   ))}
                 </select>
                 <NeonButton variant="blue" onClick={() => setStep('inbox')} className="!px-6">
-                  <Inbox size={18} className="mr-2" /> Operations Hub
+                  <Inbox size={18} className="mr-2" /> Saved Jobs
                 </NeonButton>
               </div>
             </div>
@@ -1610,7 +1744,7 @@ function AppContent() {
                     <FileText size={32} />
                   </div>
                   <div className="space-y-2">
-                    <h4 className="text-sm font-black uppercase tracking-tight">STRATEGIC ENVOY</h4>
+                    <h4 className="text-sm font-black uppercase tracking-tight">COVER LETTER</h4>
                     <p className="text-[10px] text-white/40 uppercase tracking-widest max-w-[200px]">Draft a high-impact cover letter tailored for {extractedJob.company}.</p>
                   </div>
                   <NeonButton 
@@ -1618,7 +1752,7 @@ function AppContent() {
                     onClick={() => handleGenerateCoverLetter(extractedJob)}
                     isLoading={loadingCoverLetter}
                   >
-                    Generate Enclosure
+                    Generate Cover Letter
                   </NeonButton>
                 </GlassCard>
 
@@ -1889,14 +2023,14 @@ function AppContent() {
                       <p className="text-[9px] text-white/40 font-bold uppercase tracking-widest truncate">{letter.job_title}</p>
                    </div>
                    <div className="pt-4 border-t border-white/5 flex items-center justify-between">
-                      <span className="text-[9px] font-black text-neon-blue uppercase">View Strategist</span>
+                      <span className="text-[9px] font-black text-neon-blue uppercase">View Cover Letter</span>
                       <ArrowUpRight size={14} className="text-white/10 group-hover:text-neon-blue" />
                    </div>
                 </GlassCard>
               ))}
               {coverLetters.length === 0 && (
                 <div className="col-span-full p-20 text-center border-2 border-dashed border-white/5 rounded-3xl">
-                   <p className="text-[10px] font-black text-white/20 uppercase tracking-[0.4em]">No strategic envoys deployed yet.</p>
+                   <p className="text-[10px] font-black text-white/20 uppercase tracking-[0.4em]">No cover letters generated yet.</p>
                 </div>
               )}
             </div>
@@ -1908,7 +2042,7 @@ function AppContent() {
             letter={selectedCoverLetter}
             onClose={() => setStep('cover_letters')}
             onDelete={async () => {
-              if (confirm('Delete this envoy?')) {
+              if (confirm('Delete this cover letter?')) {
                 await deleteCoverLetter(selectedCoverLetter.id!);
                 setStep('cover_letters');
               }
@@ -1945,27 +2079,53 @@ function AppContent() {
           <span className="text-transparent bg-clip-text bg-gradient-to-r from-neon-blue via-neon-purple to-neon-orange animate-gradient-x">CAREER</span>
         </h2>
         <p className="max-w-2xl mx-auto text-white/40 text-lg md:text-xl font-medium tracking-tight">
-          Professional application compiler and neural career management system.
+          An intelligent, AI-powered platform to organize, optimize, and streamline your job search.
         </p>
       </div>
 
-      <div className="flex flex-col sm:flex-row items-center justify-center gap-8 relative z-10">
-        <NeonButton 
-          variant="blue" 
-          className="px-16 py-6 text-2xl font-black italic tracking-tighter rounded-2xl shadow-[0_0_30px_rgba(0,243,255,0.1)] hover:scale-105 transition-all"
-          onClick={() => user ? setStep('dashboard') : handleSignIn()}
-          isLoading={authLoading}
-        >
-          {user ? 'INITIALIZE SYSTEM' : (authLoading ? 'ESTABLISHING LINK...' : 'CONNECT NEURAL LINK')} 
-          <ChevronRight size={28} className="ml-2" />
-        </NeonButton>
+      <div className="flex flex-col sm:flex-row items-center justify-center gap-6 relative z-10">
+        {user ? (
+          <NeonButton 
+            variant="blue" 
+            className="px-16 py-6 text-2xl font-black italic tracking-tighter rounded-2xl shadow-[0_0_30px_rgba(0,243,255,0.1)] hover:scale-105 transition-all"
+            onClick={() => setStep('dashboard')}
+          >
+            GET STARTED
+            <ChevronRight size={28} className="ml-2" />
+          </NeonButton>
+        ) : (
+          <>
+            <NeonButton 
+              variant="blue" 
+              className="px-10 py-5 text-xl font-black italic tracking-tighter rounded-2xl shadow-[0_0_20px_rgba(0,243,255,0.1)] hover:scale-105 transition-all"
+              onClick={handleSignIn}
+              isLoading={authLoading}
+            >
+              SIGN IN WITH GOOGLE
+              <ChevronRight size={22} className="ml-2" />
+            </NeonButton>
+
+            <NeonButton 
+              variant="purple" 
+              className="px-10 py-5 text-xl font-black italic tracking-tighter rounded-2xl shadow-[0_0_20px_rgba(157,23,77,0.1)] hover:scale-105 transition-all"
+              onClick={() => {
+                setShowEmailAuthModal(true);
+                setEmailAuthError(null);
+                setIsSignUp(false);
+              }}
+            >
+              SIGN IN WITH EMAIL
+              <ChevronRight size={22} className="ml-2" />
+            </NeonButton>
+          </>
+        )}
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-8 w-full max-w-5xl relative z-10 px-6">
         {[
-          { icon: <Search size={24}/>, title: "INTELLIGENCE", desc: "Automated job parameter extraction and alignment logic." },
-          { icon: <Cpu size={24}/>, title: "COMPILER", desc: "Deterministic professional artifact generation engine." },
-          { icon: <Database size={24}/>, title: "LOGISTICS", desc: "Consolidated application operations and lifecycle management." }
+          { icon: <Search size={24}/>, title: "JOB SCANNING", desc: "Instantly extract key job requirements, skill demands, and salaries from description texts." },
+          { icon: <Cpu size={24}/>, title: "RESUME BUILDER", desc: "Generate beautifully tailored resumes and cover letters specifically optimized for each job." },
+          { icon: <Database size={24}/>, title: "PROGRESS TRACKING", desc: "Organize all your saved job opportunities, application stages, and follow-ups in one place." }
         ].map((feat, i) => (
           <GlassCard key={i} className="p-10 flex flex-col items-center gap-6 group hover:bg-white/5 border-white/5">
             <div className="w-12 h-12 rounded-xl bg-white/5 flex items-center justify-center text-neon-blue group-hover:scale-110 group-hover:rotate-6 transition-transform">
@@ -2010,21 +2170,21 @@ function AppContent() {
 
           <div className="flex-1 overflow-y-auto p-8 futuristic-scroll space-y-6">
             <div className="flex items-center justify-between mb-4">
-               <h4 className="text-[10px] font-black uppercase tracking-[0.3em] text-white/30">Compiler Archive</h4>
+               <h4 className="text-[10px] font-black uppercase tracking-[0.3em] text-white/30">Saved Resumes</h4>
                <NeonButton 
                  variant="purple" 
                  className="!py-2 !px-4 !text-[10px]"
                  onClick={() => handleGenerateCV(job)}
                  isLoading={loadingCV}
                >
-                 <Zap size={14} className="mr-2" /> COMPILE NEW VERSION
+                 <Zap size={14} className="mr-2" /> GENERATE TAILORED RESUME
                </NeonButton>
             </div>
 
             <div className="space-y-4">
               {(cvHistory || []).filter(h => h.job_id === viewingJobIdForArtifacts).length === 0 ? (
                 <div className="text-center py-12 border-2 border-dashed border-white/5 rounded-2xl">
-                  <p className="text-white/20 text-xs uppercase tracking-widest font-black">No artifacts generated for this node.</p>
+                  <p className="text-white/20 text-xs uppercase tracking-widest font-black">No tailored resumes generated for this job yet.</p>
                 </div>
               ) : (
                 (cvHistory || [])
@@ -2115,7 +2275,11 @@ function AppContent() {
             
             <div className="ml-auto flex items-center gap-4">
                <button 
-                onClick={handleSignIn}
+                onClick={() => {
+                  setShowEmailAuthModal(true);
+                  setEmailAuthError(null);
+                  setIsSignUp(false);
+                }}
                 disabled={authLoading}
                 className="px-6 py-2 rounded-xl bg-neon-blue/10 border border-neon-blue/30 text-neon-blue text-[11px] font-black uppercase tracking-widest hover:bg-neon-blue/20 transition-all active:scale-95"
               >
@@ -2144,10 +2308,11 @@ function AppContent() {
 
             <div className="flex-1 overflow-y-auto p-4 space-y-8 futuristic-scroll">
               <div className="space-y-1">
-                <p className="px-3 pb-2 text-[10px] font-black tracking-[0.2em] text-white/20 uppercase">Core Systems</p>
+                <p className="px-3 pb-2 text-[10px] font-black tracking-[0.2em] text-white/20 uppercase">Main Menu</p>
                 {[
-                  { id: 'dashboard', label: 'Command Center', icon: <LayoutDashboard size={18} /> },
-                  { id: 'inbox', label: 'Operations', icon: <Inbox size={18} />, count: (jobs || []).length },
+                  { id: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard size={18} /> },
+                  { id: 'inbox', label: 'Saved Jobs', icon: <Inbox size={18} />, count: (jobs || []).length },
+                  { id: 'capture', label: 'Add New Job', icon: <Search size={18} /> },
                 ].map(item => (
                   <button
                     key={item.id}
@@ -2170,13 +2335,12 @@ function AppContent() {
               </div>
 
               <div className="space-y-1">
-                <p className="px-3 pb-2 text-[10px] font-black tracking-[0.2em] text-white/20 uppercase">Intelligence</p>
+                <p className="px-3 pb-2 text-[10px] font-black tracking-[0.2em] text-white/20 uppercase">AI Documents</p>
                 {[
-                  { id: 'capture', label: 'Add New Job', icon: <Search size={18} /> },
-                  { id: 'cv_builder', label: 'CV Builder', icon: <PenTool size={18} /> },
                   { id: 'profile', label: 'My Profile', icon: <User size={18} /> },
-                  { id: 'cv_history', label: 'Compiler Archive', icon: <Cpu size={18} />, count: (cvHistory || []).length },
-                  { id: 'cover_letters', label: 'Strategic Envoys', icon: <FileText size={18} />, count: (coverLetters || []).length },
+                  { id: 'cv_builder', label: 'Resume Builder', icon: <PenTool size={18} /> },
+                  { id: 'cv_history', label: 'Saved Resumes', icon: <Cpu size={18} />, count: (cvHistory || []).length },
+                  { id: 'cover_letters', label: 'Cover Letters', icon: <FileText size={18} />, count: (coverLetters || []).length },
                   ...(isAdmin ? [{ id: 'logs', label: 'Audit Logs', icon: <Activity size={18} /> }] : []),
                 ].map(item => (
                   <button
@@ -2195,13 +2359,13 @@ function AppContent() {
               </div>
 
               <div className="space-y-1">
-                <p className="px-3 pb-2 text-[10px] font-black tracking-[0.2em] text-white/20 uppercase">Archive</p>
+                <p className="px-3 pb-2 text-[10px] font-black tracking-[0.2em] text-white/20 uppercase">History & Status</p>
                 {[
-                  { id: 'applications', label: 'My Applications', icon: <History size={18} />, count: (applications || []).length },
+                  { id: 'applications', label: 'Applied Jobs', icon: <History size={18} />, count: (applications || []).length },
                   { id: 'tracking', label: 'Status Tracker', icon: <Activity size={18} />, count: (trackingRecords || []).length },
                   { id: 'database', label: 'Job Database', icon: <Database size={18} /> },
-                  { id: 'archive', label: 'Extraction Audit', icon: <ShieldCheck size={18} /> },
-                  { id: 'history', label: 'Activity Logs', icon: <MessageSquare size={18} />, count: (chatHistory || []).length },
+                  { id: 'archive', label: 'AI Parsing Logs', icon: <ShieldCheck size={18} /> },
+                  { id: 'history', label: 'AI Chat History', icon: <MessageSquare size={18} />, count: (chatHistory || []).length },
                 ].map(item => (
                   <button
                     key={item.id}
@@ -2224,7 +2388,7 @@ function AppContent() {
                 onClick={() => signOut()}
                 className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-[10px] font-black uppercase tracking-widest text-red-400 hover:bg-red-400/5 transition-all"
               >
-                <LogOut size={16} /> Disconnect Link
+                <LogOut size={16} /> Sign Out
               </button>
             </div>
           </aside>
@@ -2233,7 +2397,7 @@ function AppContent() {
             <header className="h-16 border-b border-white/5 px-8 flex items-center justify-between backdrop-blur-xl z-30">
               <div className="flex items-center gap-4">
                 <div className="flex items-center gap-2 text-[10px] uppercase tracking-widest font-black text-white/30">
-                  <span className="hover:text-neon-blue cursor-pointer" onClick={() => setStep('dashboard')}>COMMAND</span>
+                  <span className="hover:text-neon-blue cursor-pointer" onClick={() => setStep('dashboard')}>DASHBOARD</span>
                   <ChevronRight size={12} />
                   <span className="text-white/70">{step.replace('_', ' ').toUpperCase()}</span>
                 </div>
@@ -2246,6 +2410,16 @@ function AppContent() {
                 </div>
                 
                 <div className="flex items-center gap-2">
+                  <button 
+                    onClick={() => {
+                      setShowTutorial(true);
+                      setTutorialStep(0);
+                    }}
+                    title="System Guide / Tutorial"
+                    className="p-2 rounded-lg hover:bg-white/5 text-white/40 hover:text-neon-teal transition-colors"
+                  >
+                    <HelpCircle size={18} />
+                  </button>
                   <button 
                     onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
                     className="p-2 rounded-lg hover:bg-white/5 text-white/40 hover:text-neon-blue transition-colors"
@@ -2323,6 +2497,255 @@ function AppContent() {
               }
             }}
           />
+        )}
+        {showEmailAuthModal && (
+          <div key="email-auth-modal" className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-[#050505]/80 backdrop-blur-md">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 10 }}
+              className="w-full max-w-md"
+            >
+              <GlassCard className="p-8 border-neon-blue/30 relative overflow-hidden space-y-6">
+                <div className="absolute top-0 right-0 p-4">
+                  <button 
+                    onClick={() => setShowEmailAuthModal(false)}
+                    className="text-white/40 hover:text-white transition-colors"
+                  >
+                    <X size={20} />
+                  </button>
+                </div>
+
+                <div className="text-center space-y-2">
+                  <div className="w-12 h-12 rounded-full bg-neon-blue/10 flex items-center justify-center mx-auto text-neon-blue">
+                    <Brain size={24} />
+                  </div>
+                  <h3 className="text-2xl font-black uppercase tracking-tighter">
+                    {isSignUp ? "Create Account" : "Access Neural Link"}
+                  </h3>
+                  <p className="text-xs text-white/40 uppercase tracking-widest">
+                    CareerOS Identity Verification
+                  </p>
+                </div>
+
+                <div className="space-y-4">
+                  <NeonButton
+                    variant="blue"
+                    type="button"
+                    className="w-full py-3 flex items-center justify-center gap-2 text-xs font-bold uppercase tracking-wider bg-white/5 border-white/10 text-white hover:bg-white/10"
+                    onClick={async () => {
+                      try {
+                        await handleSignIn();
+                        setShowEmailAuthModal(false);
+                      } catch (e) {}
+                    }}
+                    isLoading={authLoading}
+                  >
+                    <span className="font-black italic">G</span> Connect with Google
+                  </NeonButton>
+
+                  <div className="flex items-center gap-2 my-4">
+                    <div className="flex-1 h-[1px] bg-white/10" />
+                    <span className="text-[10px] text-white/30 uppercase tracking-widest font-bold">OR EMAIL</span>
+                    <div className="flex-1 h-[1px] bg-white/10" />
+                  </div>
+
+                  <form onSubmit={handleEmailAuthSubmit} className="space-y-4">
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-black uppercase tracking-widest text-white/40">Email Protocol</label>
+                      <FuturisticInput
+                        type="email"
+                        placeholder="name@domain.com"
+                        value={authEmail}
+                        onChange={(e) => setAuthEmail(e.target.value)}
+                        required
+                      />
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-black uppercase tracking-widest text-white/40">Secure Key (Password)</label>
+                      <FuturisticInput
+                        type="password"
+                        placeholder="••••••••"
+                        value={authPassword}
+                        onChange={(e) => setAuthPassword(e.target.value)}
+                        required
+                      />
+                    </div>
+
+                    {emailAuthError && (
+                      <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-xs text-red-400 font-mono">
+                        {emailAuthError}
+                      </div>
+                    )}
+
+                    <div className="pt-2">
+                      <NeonButton
+                        variant="purple"
+                        type="submit"
+                        className="w-full py-4 text-xs font-black uppercase tracking-widest italic"
+                        isLoading={emailAuthLoading}
+                      >
+                        {isSignUp ? "INITIALIZE DIRECT ACCOUNT" : "AUTHENTICATE DIRECT LINK"}
+                      </NeonButton>
+                    </div>
+                  </form>
+                </div>
+
+                <div className="flex justify-between items-center text-[10px] font-bold uppercase tracking-wider text-white/40 pt-2 border-t border-white/5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsSignUp(!isSignUp);
+                      setEmailAuthError(null);
+                    }}
+                    className="hover:text-neon-blue transition-colors"
+                  >
+                    {isSignUp ? "Already registered? Sign In" : "Need account? Register"}
+                  </button>
+                  
+                  {!isSignUp && (
+                    <button
+                      type="button"
+                      onClick={handlePasswordResetSubmit}
+                      className="hover:text-neon-orange transition-colors"
+                    >
+                      Forgot Key?
+                    </button>
+                  )}
+                </div>
+              </GlassCard>
+            </motion.div>
+          </div>
+        )}
+        {showTutorial && (
+          <div key="system-tutorial-modal" className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-[#050505]/90 backdrop-blur-md">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="w-full max-w-2xl"
+            >
+              <GlassCard className="p-8 border-neon-blue/30 relative overflow-hidden space-y-6">
+                {/* Scanline Effect */}
+                <div className="absolute inset-0 pointer-events-none bg-gradient-to-b from-transparent via-white/[0.02] to-transparent animate-pulse" />
+                
+                {/* Header */}
+                <div className="flex items-center justify-between border-b border-white/5 pb-4">
+                  <div className="flex items-center gap-3">
+                    <span className="text-[10px] font-black uppercase tracking-[0.2em] px-2 py-0.5 rounded bg-neon-blue/10 text-neon-blue border border-neon-blue/20">
+                      PROTOCOL DECK {tutorialStep + 1} / 4
+                    </span>
+                    <span className="text-white/20 font-mono text-xs">|</span>
+                    <span className="text-[10px] font-black tracking-widest text-white/40 uppercase">
+                      SYSTEM MANUAL v3.5
+                    </span>
+                  </div>
+                  <button 
+                    onClick={() => {
+                      if (dontShowAgain && user) {
+                        localStorage.setItem(`has_seen_tutorial_${user.uid}`, 'true');
+                      }
+                      setShowTutorial(false);
+                    }}
+                    className="text-white/40 hover:text-white transition-colors"
+                  >
+                    <X size={20} />
+                  </button>
+                </div>
+
+                {/* Body Content */}
+                <div className="grid grid-cols-1 md:grid-cols-12 gap-8 py-2">
+                  {/* Left Icon Visual Node */}
+                  <div className="md:col-span-3 flex flex-col items-center justify-center p-4 rounded-xl bg-white/[0.02] border border-white/5 min-h-[140px] text-center space-y-3">
+                    <div className="p-4 rounded-full bg-white/5 border border-white/10 relative">
+                      {tutorialDecks[tutorialStep].icon}
+                      <span className="absolute -inset-1 rounded-full bg-neon-blue/5 animate-ping" />
+                    </div>
+                    <span className="text-[9px] font-mono uppercase tracking-widest text-white/30">OPERATIONAL NODE</span>
+                  </div>
+
+                  {/* Right Description Node */}
+                  <div className="md:col-span-9 space-y-4">
+                    <div>
+                      <h4 className="text-xl font-black uppercase tracking-tight text-white flex items-center gap-2">
+                        {tutorialDecks[tutorialStep].title}
+                      </h4>
+                      <p className="text-[10px] font-mono tracking-widest text-neon-blue uppercase font-bold mt-1">
+                        {tutorialDecks[tutorialStep].subtitle}
+                      </p>
+                    </div>
+
+                    <p className="text-xs text-white/60 leading-relaxed">
+                      {tutorialDecks[tutorialStep].description}
+                    </p>
+
+                    <div className="space-y-2 pt-2">
+                      <p className="text-[9px] font-black uppercase tracking-widest text-white/40">SYSTEM CAPABILITIES:</p>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        {tutorialDecks[tutorialStep].highlights.map((h, idx) => (
+                          <div key={idx} className="flex items-start gap-2 text-xs">
+                            <span className="text-neon-blue font-mono font-bold mt-0.5">✦</span>
+                            <span className="text-white/50 text-[11px] leading-snug">{h}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Footer Controls */}
+                <div className="border-t border-white/5 pt-6 flex flex-col sm:flex-row items-center justify-between gap-4">
+                  {/* Checkbox for Do not show again */}
+                  <label className="flex items-center gap-3 cursor-pointer group text-[10px] font-bold uppercase tracking-wider text-white/40 hover:text-white/60 transition-colors">
+                    <input 
+                      type="checkbox"
+                      checked={dontShowAgain}
+                      onChange={(e) => setDontShowAgain(e.target.checked)}
+                      className="rounded border-white/10 bg-white/5 text-neon-blue focus:ring-0 focus:ring-offset-0 w-3.5 h-3.5 transition-colors"
+                    />
+                    <span>Skip manual on next system start</span>
+                  </label>
+
+                  {/* Nav Buttons */}
+                  <div className="flex items-center gap-3 w-full sm:w-auto justify-end">
+                    {tutorialStep > 0 && (
+                      <NeonButton
+                        variant="purple"
+                        className="px-4 py-2 text-[10px] font-black uppercase tracking-widest"
+                        onClick={() => setTutorialStep(prev => prev - 1)}
+                      >
+                        BACK PROTOCOL
+                      </NeonButton>
+                    )}
+
+                    {tutorialStep < 3 ? (
+                      <NeonButton
+                        variant="blue"
+                        className="px-6 py-2.5 text-[10px] font-black uppercase tracking-widest"
+                        onClick={() => setTutorialStep(prev => prev + 1)}
+                      >
+                        NEXT PROTOCOL
+                      </NeonButton>
+                    ) : (
+                      <NeonButton
+                        variant="orange"
+                        className="px-8 py-2.5 text-[10px] font-black uppercase tracking-widest"
+                        onClick={() => {
+                          if (dontShowAgain && user) {
+                            localStorage.setItem(`has_seen_tutorial_${user.uid}`, 'true');
+                          }
+                          setShowTutorial(false);
+                        }}
+                      >
+                        INITIATE COMMAND CENTER
+                      </NeonButton>
+                    )}
+                  </div>
+                </div>
+              </GlassCard>
+            </motion.div>
+          </div>
         )}
       </AnimatePresence>
     </div>

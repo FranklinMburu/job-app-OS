@@ -19,7 +19,7 @@ import {
   OutputMode
 } from "../types";
 
-const MODEL_NAME = "gemini-3-flash-preview";
+const MODEL_NAME = "gemini-3.5-flash";
 
 // Initialize AI
 const getAI = () => {
