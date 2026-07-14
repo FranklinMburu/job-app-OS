@@ -3,6 +3,7 @@ import { createServer as createViteServer } from 'vite';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
+import { spawn } from 'child_process';
 import * as cheerio from 'cheerio';
 import pg from 'pg';
 const { Pool } = pg;
@@ -200,6 +201,78 @@ apiRouter.post('/fetch-url', async (req, res) => {
     res.status(500).json({ 
       error: 'Failed to fetch job page', 
       detail: error.message
+    });
+  }
+});
+
+// Dynamic Webpage Extraction Endpoint
+apiRouter.post('/api/extract-webpage', async (req, res) => {
+  const { url, include_html = true, include_network_log = true, debug = false } = req.body;
+  if (!url) {
+    return res.status(400).json({
+      success: false,
+      requested_url: '',
+      error: { type: 'validation', message: 'URL is required' }
+    });
+  }
+
+  try {
+    console.log(`[Node WebpageExtractor] Spawning extraction CLI for: ${url}`);
+    
+    // Set up request payload for Python CLI
+    const payload = JSON.stringify({ url, include_html, include_network_log, debug });
+    
+    // Spawn python3 with PYTHONPATH set
+    const pythonProcess = spawn('python3', ['app/extract_cli.py', payload], {
+      env: { ...process.env, PYTHONPATH: '.' }
+    });
+
+    let stdoutData = '';
+    let stderrData = '';
+
+    pythonProcess.stdout.on('data', (data) => {
+      stdoutData += data.toString();
+    });
+
+    pythonProcess.stderr.on('data', (data) => {
+      stderrData += data.toString();
+    });
+
+    pythonProcess.on('close', (code) => {
+      if (code !== 0) {
+        console.error(`[Node WebpageExtractor Error] Python exit code: ${code}. Stderr: ${stderrData}`);
+        return res.status(500).json({
+          success: false,
+          requested_url: url,
+          error: {
+            type: 'server_error',
+            message: `Extraction pipeline failed with exit code ${code}. Stderr: ${stderrData.trim()}`
+          }
+        });
+      }
+
+      try {
+        const responseData = JSON.parse(stdoutData.trim());
+        res.json(responseData);
+      } catch (parseError: any) {
+        console.error(`[Node WebpageExtractor Error] Failed to parse Python stdout: ${stdoutData}`);
+        res.status(500).json({
+          success: false,
+          requested_url: url,
+          error: {
+            type: 'server_error',
+            message: `Pipeline returned invalid JSON output: ${parseError.message}`
+          }
+        });
+      }
+    });
+
+  } catch (error: any) {
+    console.error('[Node WebpageExtractor Exception]:', error);
+    res.status(500).json({
+      success: false,
+      requested_url: url,
+      error: { type: 'server_error', message: error.message }
     });
   }
 });

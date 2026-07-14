@@ -2295,13 +2295,34 @@ function AppContent() {
       ) : (
         /* Enterprise Layout */
         <div className="flex h-screen overflow-hidden">
+          {/* Mobile Backdrop Overlay */}
+          {isMobileMenuOpen && (
+            <div 
+              className="fixed inset-0 bg-black/60 backdrop-blur-sm z-40 md:hidden"
+              onClick={() => setIsMobileMenuOpen(false)}
+            />
+          )}
+
           {/* Sidebar Navigation */}
-          <aside className="w-64 border-r border-white/5 bg-[#0d0f17] flex flex-col z-40 relative">
-            <div className="p-6 flex items-center gap-3 border-b border-white/5">
-              <div className="w-8 h-8 rounded-lg bg-neon-blue/10 flex items-center justify-center">
-                <Terminal size={18} className="text-neon-blue" />
+          <aside 
+            className={cn(
+              "fixed inset-y-0 left-0 w-64 border-r border-white/5 bg-[#0d0f17] flex flex-col z-50 transition-transform duration-300 transform md:relative md:translate-x-0",
+              isMobileMenuOpen ? "translate-x-0" : "-translate-x-full"
+            )}
+          >
+            <div className="p-6 flex items-center justify-between border-b border-white/5">
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 rounded-lg bg-neon-blue/10 flex items-center justify-center">
+                  <Terminal size={18} className="text-neon-blue" />
+                </div>
+                <h1 className="text-sm font-black tracking-tighter uppercase">CAREER<span className="text-neon-blue">OS</span></h1>
               </div>
-              <h1 className="text-sm font-black tracking-tighter uppercase">CAREER<span className="text-neon-blue">OS</span></h1>
+              <button 
+                onClick={() => setIsMobileMenuOpen(false)}
+                className="p-1 rounded bg-white/5 text-white/40 hover:text-white md:hidden"
+              >
+                <X size={16} />
+              </button>
             </div>
 
             <div className="flex-1 overflow-y-auto p-4 space-y-8 futuristic-scroll">
@@ -2314,7 +2335,10 @@ function AppContent() {
                 ].map(item => (
                   <button
                     key={item.id}
-                    onClick={() => setStep(item.id as any)}
+                    onClick={() => {
+                      setStep(item.id as any);
+                      setIsMobileMenuOpen(false);
+                    }}
                     className={cn(
                       "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-[11px] font-bold uppercase tracking-wider transition-all",
                       step === item.id 
@@ -2343,7 +2367,10 @@ function AppContent() {
                 ].map(item => (
                   <button
                     key={item.id}
-                    onClick={() => setStep(item.id as any)}
+                    onClick={() => {
+                      setStep(item.id as any);
+                      setIsMobileMenuOpen(false);
+                    }}
                     className={cn(
                       "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-[11px] font-bold uppercase tracking-wider transition-all",
                       step === item.id 
@@ -2367,7 +2394,10 @@ function AppContent() {
                 ].map(item => (
                   <button
                     key={item.id}
-                    onClick={() => setStep(item.id as any)}
+                    onClick={() => {
+                      setStep(item.id as any);
+                      setIsMobileMenuOpen(false);
+                    }}
                     className={cn(
                       "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-[11px] font-bold uppercase tracking-wider transition-all",
                       step === item.id 
@@ -2383,7 +2413,10 @@ function AppContent() {
 
             <div className="p-4 border-t border-white/5 mt-auto">
               <button 
-                onClick={() => signOut()}
+                onClick={() => {
+                  signOut();
+                  setIsMobileMenuOpen(false);
+                }}
                 className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-[10px] font-black uppercase tracking-widest text-red-400 hover:bg-red-400/5 transition-all"
               >
                 <LogOut size={16} /> Sign Out
@@ -2392,22 +2425,29 @@ function AppContent() {
           </aside>
 
           <div className="flex-1 flex flex-col min-w-0 bg-[#0a0c14]">
-            <header className="h-16 border-b border-white/5 px-8 flex items-center justify-between backdrop-blur-xl z-30">
-              <div className="flex items-center gap-4">
+            <header className="h-16 border-b border-white/5 px-4 md:px-8 flex items-center justify-between backdrop-blur-xl z-30">
+              <div className="flex items-center gap-3 md:gap-4">
+                <button
+                  onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+                  className="p-2 -ml-2 rounded-lg hover:bg-white/5 text-white/40 hover:text-neon-blue md:hidden transition-colors"
+                  aria-label="Toggle Navigation Menu"
+                >
+                  <Menu size={18} />
+                </button>
                 <div className="flex items-center gap-2 text-[10px] uppercase tracking-widest font-black text-white/30">
                   <span className="hover:text-neon-blue cursor-pointer" onClick={() => setStep('dashboard')}>DASHBOARD</span>
                   <ChevronRight size={12} />
-                  <span className="text-white/70">{step.replace('_', ' ').toUpperCase()}</span>
+                  <span className="text-white/70 truncate max-w-[120px] sm:max-w-none">{step.replace('_', ' ').toUpperCase()}</span>
                 </div>
               </div>
 
-              <div className="flex items-center gap-6">
-                <div className="flex items-center gap-3 px-4 py-1.5 rounded-full bg-white/5 border border-white/10">
+              <div className="flex items-center gap-3 md:gap-6">
+                <div className="hidden sm:flex items-center gap-3 px-4 py-1.5 rounded-full bg-white/5 border border-white/10">
                   <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
                   <span className="text-[10px] font-black uppercase tracking-widest text-white/60 line-clamp-1">{user?.displayName}</span>
                 </div>
                 
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1.5 md:gap-2">
                   <button 
                     onClick={() => {
                       setShowTutorial(true);
@@ -2432,7 +2472,7 @@ function AppContent() {
               </div>
             </header>
 
-            <div className="flex-1 overflow-y-auto p-8 futuristic-scroll">
+            <div className="flex-1 overflow-y-auto p-4 md:p-8 futuristic-scroll">
               <AnimatePresence mode="wait">
                 {renderAppView()}
               </AnimatePresence>

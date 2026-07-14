@@ -12,3 +12,4 @@ Pillow
 firebase-admin
 sqlalchemy
 psycopg2-binary
+playwright

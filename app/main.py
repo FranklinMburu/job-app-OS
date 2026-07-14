@@ -3,7 +3,7 @@ from fastapi import FastAPI, Request, status, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exceptions import RequestValidationError
-from app.api.routes import jobs, profile, tracking
+from app.api.routes import jobs, profile, tracking, webpage_extraction
 from app.core.database import Base, engine
 
 # Configure logging
@@ -74,3 +74,4 @@ async def health_check():
 app.include_router(jobs.router, prefix="/backend-v2060", tags=["Jobs"])
 app.include_router(profile.router, prefix="/backend-v2060/profile", tags=["Profile"])
 app.include_router(tracking.router, prefix="/backend-v2060/tracking", tags=["Tracking"])
+app.include_router(webpage_extraction.router, prefix="/backend-v2060/api", tags=["Webpage Extraction"])
